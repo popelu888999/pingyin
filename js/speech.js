@@ -1,151 +1,191 @@
-// 《拼音大冒险》— 语音识别模块
+// 《拼音大冒险》— 语音识别模块（Vosk 离线版）
 
 const SpeechModule = {
-  recognition: null,
-  isSupported: false,
-  isListening: false,
-  _gotResult: false,
-  onResult: null,
-  onError: null,
+  // Vosk model (loaded once)
+  voskModel: null,
+  isModelLoaded: false,
+  isModelLoading: false,
 
-  // Audio analyser for waveform visualization
-  audioContext: null,
-  analyser: null,
+  // Per-session microphone stream
   mediaStream: null,
+
+  // Per-question recognition session
+  recognizer: null,
+  audioContext: null,
   sourceNode: null,
+  processorNode: null,  // ScriptProcessor feeds audio to Vosk
+  analyser: null,       // AnalyserNode for waveform visualization
   dataArray: null,
+  isListening: false,
+  isSupported: false,    // true when Vosk global exists
+
+  // Callbacks
+  onResult: null,
+  onPartialResult: null,
+
+  // Collected results for the current recognition session
+  _results: [],
 
   init() {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      this.recognition = new SpeechRecognition();
-      this.recognition.lang = 'zh-CN';
-      this.recognition.continuous = false;
-      this.recognition.interimResults = false;
-      this.recognition.maxAlternatives = 5;
-      this.isSupported = true;
-
-      this.recognition.onresult = (event) => {
-        const results = [];
-        // 取最新的识别结果（continuous 模式下 results 会累积）
-        const latest = event.results[event.results.length - 1];
-        for (let i = 0; i < latest.length; i++) {
-          results.push(latest[i].transcript.toLowerCase());
-        }
-        console.log('[Speech] onresult:', results);
-        this._gotResult = true;
-        this.isListening = false;
-        if (this.onResult) this.onResult(results);
-      };
-
-      this.recognition.onerror = (event) => {
-        console.log('[Speech] onerror:', event.error);
-        this._gotResult = true;
-        this.isListening = false;
-        if (this.onError) this.onError(event.error);
-      };
-
-      this.recognition.onend = () => {
-        console.log('[Speech] onend, hadResult:', this._gotResult);
-        this.isListening = false;
-        if (!this._gotResult && this.onError) {
-          this.onError('no-speech');
-        }
-        this._gotResult = false;
-      };
-    }
+    this.isSupported = (typeof Vosk !== 'undefined');
+    console.log('[Vosk] isSupported:', this.isSupported);
     return this.isSupported;
   },
 
-  // 开始录音识别
-  startListening(onResult, onError) {
-    if (!this.isSupported) return false;
-    this.onResult = onResult;
-    this.onError = onError;
-    this._gotResult = false;
-    if (this.isListening) {
-      console.log('[Speech] already listening, updating callbacks only');
-      return true;
-    }
-    this.isListening = true;
+  // Load Vosk model (call once, shows progress via callback)
+  async loadModel(modelUrl, onProgress) {
+    if (this.isModelLoaded) return true;
+    if (this.isModelLoading) return false;
+    this.isModelLoading = true;
+
     try {
-      this.recognition.start();
-      console.log('[Speech] recognition.start() called');
+      console.log('[Vosk] Loading model from:', modelUrl);
+      this.voskModel = await Vosk.createModel(modelUrl);
+      this.voskModel.setLogLevel(-1);
+      this.isModelLoaded = true;
+      this.isModelLoading = false;
+      console.log('[Vosk] Model loaded successfully');
       return true;
     } catch (e) {
-      console.log('[Speech] start() failed:', e.message);
-      this.isListening = false;
+      console.error('[Vosk] Failed to load model:', e);
+      this.isModelLoading = false;
       return false;
     }
   },
 
-  // 停止识别
-  stopListening() {
-    if (this.recognition && this.isListening) {
-      this.recognition.stop();
-      this.isListening = false;
-    }
-  },
-
-  // 预先获取麦克风（游戏开始时调用一次，避免重复弹权限）
+  // Pre-acquire microphone (call once per game session)
   initMicrophone() {
     if (this.mediaStream) return Promise.resolve(true);
-    return navigator.mediaDevices.getUserMedia({ audio: true })
-      .then(stream => {
-        this.mediaStream = stream;
-        return true;
-      })
-      .catch(() => false);
-  },
-
-  // 启动音频分析器（复用已有的 mediaStream）
-  startAnalyser() {
-    if (this.mediaStream) {
-      return Promise.resolve(this._createAnalyserNodes());
-    }
-    // 兜底：如果还没有 stream，先获取
-    return this.initMicrophone().then(ok => {
-      if (!ok) return false;
-      return this._createAnalyserNodes();
+    return navigator.mediaDevices.getUserMedia({
+      video: false,
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        channelCount: 1,
+        sampleRate: 16000
+      }
+    })
+    .then(stream => {
+      this.mediaStream = stream;
+      return true;
+    })
+    .catch(e => {
+      console.error('[Vosk] getUserMedia failed:', e);
+      return false;
     });
   },
 
-  _createAnalyserNodes() {
+  // Start listening — creates recognizer + audio chain
+  // onResult(text): called for each final result
+  // onPartialResult(text): called for partial/interim results
+  startListening(onResult, onPartialResult) {
+    if (!this.isModelLoaded || !this.mediaStream) {
+      console.warn('[Vosk] Cannot start: model loaded =', this.isModelLoaded, ', stream =', !!this.mediaStream);
+      return false;
+    }
+
+    if (this.isListening) {
+      // Already listening, just update callbacks
+      this.onResult = onResult;
+      this.onPartialResult = onPartialResult;
+      return true;
+    }
+
+    this.onResult = onResult;
+    this.onPartialResult = onPartialResult;
+    this._results = [];
+
+    // Create AudioContext
     if (!this.audioContext || this.audioContext.state === 'closed') {
       this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
     }
+
+    const sampleRate = this.audioContext.sampleRate;
+
+    // Create Vosk recognizer
+    this.recognizer = new this.voskModel.KaldiRecognizer(sampleRate);
+
+    this.recognizer.on('result', (message) => {
+      const text = message.result.text;
+      if (text && text.trim()) {
+        console.log('[Vosk] Final result:', text);
+        this._results.push(text.trim());
+        if (this.onResult) this.onResult(text.trim());
+      }
+    });
+
+    this.recognizer.on('partialresult', (message) => {
+      const partial = message.result.partial;
+      if (partial && partial.trim()) {
+        if (this.onPartialResult) this.onPartialResult(partial.trim());
+      }
+    });
+
+    // Create audio source from microphone stream
+    this.sourceNode = this.audioContext.createMediaStreamSource(this.mediaStream);
+
+    // Create ScriptProcessor to feed audio to Vosk
+    this.processorNode = this.audioContext.createScriptProcessor(4096, 1, 1);
+    this.processorNode.onaudioprocess = (event) => {
+      try {
+        if (this.recognizer) {
+          this.recognizer.acceptWaveform(event.inputBuffer);
+        }
+      } catch (e) {
+        // ignore errors during shutdown
+      }
+    };
+
+    // Create AnalyserNode for waveform visualization
     this.analyser = this.audioContext.createAnalyser();
     this.analyser.fftSize = 256;
-    this.sourceNode = this.audioContext.createMediaStreamSource(this.mediaStream);
-    this.sourceNode.connect(this.analyser);
     this.dataArray = new Uint8Array(this.analyser.frequencyBinCount);
+
+    // Connect: source → analyser (for visualization)
+    //          source → processor → destination (for Vosk feeding)
+    this.sourceNode.connect(this.analyser);
+    this.sourceNode.connect(this.processorNode);
+    this.processorNode.connect(this.audioContext.destination);
+
+    this.isListening = true;
+    console.log('[Vosk] Listening started, sampleRate:', sampleRate);
     return true;
   },
 
-  // 停止音频分析器（保留 mediaStream 以复用）
-  stopAnalyser() {
+  // Stop listening — returns all collected results
+  stopListening() {
+    const results = this._results.slice();
+
+    if (this.processorNode) {
+      this.processorNode.disconnect();
+      this.processorNode = null;
+    }
     if (this.sourceNode) {
       this.sourceNode.disconnect();
       this.sourceNode = null;
+    }
+    if (this.analyser) {
+      this.analyser = null;
+    }
+    if (this.recognizer) {
+      try { this.recognizer.remove(); } catch (e) {}
+      this.recognizer = null;
     }
     if (this.audioContext) {
       this.audioContext.close().catch(() => {});
       this.audioContext = null;
     }
-    this.analyser = null;
     this.dataArray = null;
+    this.isListening = false;
+    this.onResult = null;
+    this.onPartialResult = null;
+    this._results = [];
+
+    console.log('[Vosk] Listening stopped, collected results:', results);
+    return results;
   },
 
-  // 完全释放麦克风（退出游戏时调用）
-  releaseMicrophone() {
-    this.stopAnalyser();
-    if (this.mediaStream) {
-      this.mediaStream.getTracks().forEach(t => t.stop());
-      this.mediaStream = null;
-    }
-  },
-
-  // 获取频率数据
+  // Get frequency data for waveform visualization
   getFrequencyData() {
     if (this.analyser && this.dataArray) {
       this.analyser.getByteFrequencyData(this.dataArray);
@@ -154,24 +194,17 @@ const SpeechModule = {
     return null;
   },
 
-  // 匹配识别结果
-  matchResult(results, expected) {
-    const normalizedExpected = expected.toLowerCase().trim();
-    for (const r of results) {
-      const normalized = r.replace(/\s+/g, '').toLowerCase();
-      if (normalized === normalizedExpected ||
-          normalized.includes(normalizedExpected) ||
-          normalizedExpected.includes(normalized)) {
-        return true;
-      }
+  // Release microphone (call when exiting game)
+  releaseMicrophone() {
+    this.stopListening();
+    if (this.mediaStream) {
+      this.mediaStream.getTracks().forEach(t => t.stop());
+      this.mediaStream = null;
     }
-    return false;
   },
 
   // ==================== 标准发音 (TTS) ====================
-  // 声母呼读音 + 韵母标准读音映射
   PINYIN_AUDIO_MAP: {
-    // 声母
     'b': '波', 'p': '坡', 'm': '摸', 'f': '佛',
     'd': '得', 't': '特', 'n': '讷', 'l': '勒',
     'g': '哥', 'k': '科', 'h': '喝',
@@ -179,17 +212,14 @@ const SpeechModule = {
     'zh': '知', 'ch': '吃', 'sh': '诗', 'r': '日',
     'z': '资', 'c': '次', 's': '丝',
     'y': '衣', 'w': '乌',
-    // 单韵母
     'a': '啊', 'o': '噢', 'e': '鹅', 'i': '衣', 'u': '乌', 'v': '鱼',
-    // 复韵母
     'ai': '哎', 'ei': '诶', 'ui': '威', 'ao': '凹', 'ou': '欧',
     'iu': '优', 'ie': '耶', 've': '约', 'er': '耳',
-    // 鼻韵母
     'an': '安', 'en': '恩', 'in': '因', 'un': '温', 'vn': '晕',
     'ang': '昂', 'eng': '嗯', 'ing': '英', 'ong': '翁'
   },
 
-  // 语音识别宽松匹配集（每个拼音对应的常见识别汉字，含近似音）
+  // 语音识别宽松匹配集
   SPEECH_MATCH: {
     'b': '波玻播拨伯博不把吧爸白', 'p': '坡泼破婆扑怕爬拍盘', 'm': '摸莫模磨木妈嘛么没', 'f': '佛付伏服福发法飞',
     'd': '得德的嘚大打地到都', 't': '特他她它踢天头太', 'n': '讷呢那拿你年牛奶', 'l': '勒了乐肋嘞拉来啦',
@@ -205,7 +235,7 @@ const SpeechModule = {
     'ang': '昂肮盎', 'eng': '嗯鞥哼亨', 'ing': '英应鹰影硬', 'ong': '翁嗡拥涌汪旺王望往网忘'
   },
 
-  // 儿童常见混淆音组（发音部位相近的声母/韵母互相容错）
+  // 儿童常见混淆音组
   CONFUSED_SOUNDS: {
     'b': ['p'], 'p': ['b'],
     'd': ['t', 'zh'], 't': ['d', 'ch'],
@@ -223,18 +253,20 @@ const SpeechModule = {
 
   // 匹配语音识别结果（宽松匹配）
   matchSpeechForPinyin(results, pinyinKey, hanzi) {
-    console.log('[Speech] 识别结果:', results, '期望:', pinyinKey, hanzi || '');
+    // results can be a string array or single string
+    const resultArr = Array.isArray(results) ? results : [results];
+    console.log('[Vosk] 匹配 识别结果:', resultArr, '期望:', pinyinKey, hanzi || '');
 
-    // 1. 汉字直接匹配（两拼/汉字关卡）
+    // 1. 汉字直接匹配
     if (hanzi) {
-      for (const r of results) {
+      for (const r of resultArr) {
         if (r.includes(hanzi)) return true;
       }
     }
 
-    // 2. 拼音文本匹配（识别器可能直接返回拼音字母）
+    // 2. 拼音文本匹配（Vosk 可能返回拼音字母）
     const normalizedKey = pinyinKey.toLowerCase();
-    for (const r of results) {
+    for (const r of resultArr) {
       const normalized = r.replace(/\s+/g, '').toLowerCase();
       if (normalized === normalizedKey || normalized.includes(normalizedKey)) return true;
     }
@@ -242,20 +274,20 @@ const SpeechModule = {
     // 3. SPEECH_MATCH 字符集匹配
     const chars = this.SPEECH_MATCH[pinyinKey];
     if (chars) {
-      for (const r of results) {
+      for (const r of resultArr) {
         for (const char of chars) {
           if (r.includes(char)) return true;
         }
       }
     }
 
-    // 4. 近似音宽松匹配（儿童常见混淆：t↔ch, d↔zh, n↔l 等）
+    // 4. 近似音宽松匹配（儿童混淆音）
     const confused = this.CONFUSED_SOUNDS[pinyinKey];
     if (confused) {
       for (const partner of confused) {
         const partnerChars = this.SPEECH_MATCH[partner];
         if (partnerChars) {
-          for (const r of results) {
+          for (const r of resultArr) {
             for (const char of partnerChars) {
               if (r.includes(char)) return true;
             }
@@ -267,7 +299,7 @@ const SpeechModule = {
     return false;
   },
 
-  // 播放标准发音（单独声母韵母用较高 pitch 接近一声）
+  // 播放标准发音
   playStandardSound(pinyin, hanzi) {
     if (!window.speechSynthesis) return;
     const text = hanzi || this.PINYIN_AUDIO_MAP[pinyin];
@@ -276,7 +308,6 @@ const SpeechModule = {
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = 'zh-CN';
     utterance.rate = 0.7;
-    // 单独声母/韵母用高平调（接近一声），汉字用正常音调
     utterance.pitch = hanzi ? 1.0 : 1.4;
 
     window.speechSynthesis.cancel();

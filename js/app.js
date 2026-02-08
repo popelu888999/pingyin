@@ -16,7 +16,7 @@ const App = {
   _micAvailable: false,
   _speechErrorCount: 0,     // per-question speech errors
   _speechStopTimer: null,   // 强制停止识别的计时器
-  _speechDetected: false,   // 是否检测到用户开始说话
+  _voskModelReady: false,   // Vosk 模型是否已加载
 
   LEVEL_INFO: [
     { id: 1, name: '回声森林', desc: '声母辨析', icon: '🌲', unlockScore: 0 },
@@ -287,10 +287,10 @@ const App = {
     // 保存参数以便重试
     this._lastLevelParams = { level, param1, param2 };
 
-    // 第1-3关: 预先获取麦克风权限（只弹一次）
+    // 第1-3关: 加载 Vosk 模型 + 获取麦克风
     this._micAvailable = false;
     if (level >= 1 && level <= 3 && SpeechModule.isSupported) {
-      SpeechModule.initMicrophone().then(ok => { this._micAvailable = ok; });
+      this._initVoskAndMic();
     }
 
     let result;
@@ -339,6 +339,29 @@ const App = {
       intro.remove();
       callback();
     }, 2000);
+  },
+
+  // 加载 Vosk 模型 + 麦克风（第1-3关使用）
+  async _initVoskAndMic() {
+    // 1. 加载 Vosk 模型（首次约 42MB，后续有缓存）
+    if (!this._voskModelReady) {
+      this.showFeedback('正在加载语音模型...', 'combo');
+      const ok = await SpeechModule.loadModel('model.tar.gz');
+      if (ok) {
+        this._voskModelReady = true;
+        console.log('[App] Vosk model ready');
+      } else {
+        console.warn('[App] Vosk model failed to load, speech disabled');
+        return;
+      }
+    }
+
+    // 2. 获取麦克风权限
+    const micOk = await SpeechModule.initMicrophone();
+    this._micAvailable = micOk;
+    if (!micOk) {
+      console.warn('[App] Microphone not available');
+    }
   },
 
   // ==================== 第一关/第二关：气球掉落 ====================
@@ -778,15 +801,8 @@ const App = {
         if (inputArea) inputArea.style.display = 'none';
         if (speechArea) speechArea.style.display = 'flex';
 
-        // Auto-start analyser + waveform + 语音识别
-        SpeechModule.startAnalyser().then(() => {
-          const container = document.getElementById('speech-area');
-          if (container) container.classList.add('active');
-          const btn = document.getElementById('speech-btn');
-          if (btn) { btn.classList.add('listening'); btn.textContent = '🔴'; }
-          this.drawWaveform();
-          this._startSpeechRecognition();
-        });
+        // Auto-start Vosk listening + waveform
+        this._startSpeechRecognition();
 
         return; // Don't submit to Game yet
       }
@@ -824,7 +840,6 @@ const App = {
     this._waitingForSpeech = false;
     this._currentTypedCorrect = null;
     this.stopWaveform();
-    SpeechModule.stopAnalyser();
     SpeechModule.stopListening();
 
     // Hide speech area, reset button
@@ -850,18 +865,51 @@ const App = {
     }, 800);
   },
 
-  // 启动10秒录音识别窗口
+  // 启动10秒录音识别窗口（Vosk 持续识别，无需循环重启）
   _startSpeechRecognition() {
     if (!this._waitingForSpeech) return;
     if (this._speechStopTimer) { clearTimeout(this._speechStopTimer); this._speechStopTimer = null; }
     if (this._countdownTimer) { clearInterval(this._countdownTimer); this._countdownTimer = null; }
 
     this._speechResults = [];
-    this._recordingEndTime = Date.now() + 10000;
-    SpeechModule.recognition.continuous = false;
 
-    // 开始循环识别
-    this._doRecognitionCycle();
+    // Start Vosk listening with result callbacks
+    const started = SpeechModule.startListening(
+      // onResult: each final recognition result
+      (text) => {
+        this._speechResults.push(text);
+        console.log('[App] Vosk 识别到:', text);
+        // 实时匹配：如果已匹配到，立即通过（不等10秒）
+        if (this._waitingForSpeech && this._currentTypedCorrect) {
+          const q = this._currentTypedCorrect;
+          if (SpeechModule.matchSpeechForPinyin(this._speechResults, q.answer, q.hanzi)) {
+            console.log('[App] 实时匹配成功!');
+            // setTimeout to avoid stopListening inside recognizer callback
+            setTimeout(() => this.handleSpeechResult(), 0);
+          }
+        }
+      },
+      // onPartialResult: show partial text in UI
+      (partial) => {
+        const prompt = document.querySelector('.speech-prompt');
+        if (prompt && this._countdownSec > 0) {
+          prompt.textContent = `听到: ${partial} (${this._countdownSec})`;
+        }
+      }
+    );
+
+    if (!started) {
+      console.warn('[App] Vosk startListening failed');
+      this.showFeedback('语音识别启动失败', 'wrong');
+      return;
+    }
+
+    // Show speech UI
+    const container = document.getElementById('speech-area');
+    if (container) container.classList.add('active');
+    const btn = document.getElementById('speech-btn');
+    if (btn) { btn.classList.add('listening'); btn.textContent = '🔴'; }
+    this.drawWaveform();
 
     // 10秒后强制结束，用收集的全部结果匹配
     this._speechStopTimer = setTimeout(() => {
@@ -887,30 +935,6 @@ const App = {
     }, 1000);
   },
 
-  // 在10秒窗口内循环执行识别（每次识别结束后立即重启）
-  _doRecognitionCycle() {
-    if (!this._waitingForSpeech || !this._speechStopTimer) return;
-    if (Date.now() >= this._recordingEndTime) return;
-
-    SpeechModule.isListening = false;
-    SpeechModule.startListening(
-      (results) => {
-        // 收集非空结果
-        const valid = results.filter(r => r.trim().length > 0);
-        if (valid.length > 0) {
-          this._speechResults.push(...valid);
-          console.log('[Speech] 收集到:', valid);
-        }
-        // 立即开始下一轮识别（10秒窗口内持续收集）
-        setTimeout(() => this._doRecognitionCycle(), 50);
-      },
-      (error) => {
-        // 识别失败（no-speech等），立即重试
-        setTimeout(() => this._doRecognitionCycle(), 100);
-      }
-    );
-  },
-
   // 10秒录音结束后匹配判定
   _doSpeechMatch() {
     if (this._countdownTimer) { clearInterval(this._countdownTimer); this._countdownTimer = null; }
@@ -919,7 +943,7 @@ const App = {
     if (!q) return;
 
     const allResults = this._speechResults || [];
-    console.log('[Speech] 10秒结束，全部结果:', allResults, '期望:', q.answer);
+    console.log('[Vosk] 10秒结束，全部结果:', allResults, '期望:', q.answer);
 
     if (allResults.length === 0) {
       this.showFeedback('没有听到声音，请再读一次!', 'wrong');
@@ -1028,8 +1052,9 @@ const App = {
 
     if (this._waveformAnimFrame) {
       // 正在录音 → 停止
+      if (this._speechStopTimer) { clearTimeout(this._speechStopTimer); this._speechStopTimer = null; }
+      if (this._countdownTimer) { clearInterval(this._countdownTimer); this._countdownTimer = null; }
       this.stopWaveform();
-      SpeechModule.stopAnalyser();
       SpeechModule.stopListening();
       btn.classList.remove('listening');
       btn.textContent = '🎤';
@@ -1037,14 +1062,7 @@ const App = {
       if (container) container.classList.remove('active');
     } else {
       // 重新开始
-      SpeechModule.startAnalyser().then(() => {
-        btn.classList.add('listening');
-        btn.textContent = '🔴';
-        const container = document.getElementById('speech-area');
-        if (container) container.classList.add('active');
-        this.drawWaveform();
-        this._startSpeechRecognition();
-      });
+      this._startSpeechRecognition();
     }
   },
 
@@ -1336,7 +1354,6 @@ const App = {
     if (this._countdownTimer) { clearInterval(this._countdownTimer); this._countdownTimer = null; }
     this.stopWaveform();
     SpeechModule.stopListening();
-    SpeechModule.stopAnalyser();
   },
 
   stopAllTimers() {
