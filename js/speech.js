@@ -27,27 +27,29 @@ const SpeechModule = {
 
       this.recognition.onresult = (event) => {
         const results = [];
-        for (let i = 0; i < event.results[0].length; i++) {
-          results.push(event.results[0][i].transcript.toLowerCase());
+        // 取最新的识别结果（continuous 模式下 results 会累积）
+        const latest = event.results[event.results.length - 1];
+        for (let i = 0; i < latest.length; i++) {
+          results.push(latest[i].transcript.toLowerCase());
         }
         console.log('[Speech] onresult:', results);
         this._gotResult = true;
-        this.isListening = false;
+        // continuous 模式下不停止，non-continuous 模式下标记停止
+        if (!this.recognition.continuous) this.isListening = false;
         if (this.onResult) this.onResult(results);
       };
 
       this.recognition.onerror = (event) => {
         console.log('[Speech] onerror:', event.error);
         this._gotResult = true;
-        this.isListening = false;
+        if (!this.recognition.continuous) this.isListening = false;
         if (this.onError) this.onError(event.error);
       };
 
       this.recognition.onend = () => {
-        console.log('[Speech] onend, hadResult:', this._gotResult);
-        const wasListening = this.isListening;
+        console.log('[Speech] onend, hadResult:', this._gotResult, 'continuous:', this.recognition.continuous);
         this.isListening = false;
-        if (!this._gotResult && wasListening && this.onError) {
+        if (!this._gotResult && this.onError) {
           this.onError('no-speech');
         }
         this._gotResult = false;
