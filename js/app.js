@@ -16,6 +16,7 @@ const App = {
   _micAvailable: false,
   _speechErrorCount: 0,     // per-question speech errors
   _speechStopTimer: null,   // 强制停止识别的计时器
+  _speechDetected: false,   // 是否检测到用户开始说话
 
   LEVEL_INFO: [
     { id: 1, name: '回声森林', desc: '声母辨析', icon: '🌲', unlockScore: 0 },
@@ -851,12 +852,8 @@ const App = {
   // 启动语音识别
   _startSpeechRecognition() {
     if (!this._waitingForSpeech) return;
-
-    // 清除之前的强制停止计时器
-    if (this._speechStopTimer) {
-      clearTimeout(this._speechStopTimer);
-      this._speechStopTimer = null;
-    }
+    if (this._speechStopTimer) { clearTimeout(this._speechStopTimer); this._speechStopTimer = null; }
+    this._speechDetected = false;
 
     SpeechModule.startListening(
       (results) => {
@@ -866,6 +863,7 @@ const App = {
         const validResults = results.filter(r => r.trim().length > 0);
         if (validResults.length === 0) {
           console.log('[Speech] 空结果，静默重试');
+          this._speechDetected = false;
           setTimeout(() => { if (this._waitingForSpeech) this._startSpeechRecognition(); }, 300);
           return;
         }
@@ -889,6 +887,7 @@ const App = {
             this.setCatMood('sad');
           }
           // 重启识别等待下次尝试
+          this._speechDetected = false;
           setTimeout(() => { if (this._waitingForSpeech) this._startSpeechRecognition(); }, 1500);
         }
       },
@@ -897,19 +896,12 @@ const App = {
         // no-speech 或其他错误 — 静默重启
         if (this._waitingForSpeech) {
           console.log('[Speech] 错误后重启:', error);
+          this._speechDetected = false;
           setTimeout(() => { if (this._waitingForSpeech) this._startSpeechRecognition(); }, 500);
         }
       }
     );
-
-    // 2.5秒后强制停止识别，迫使引擎返回已听到的内容（避免用户需要一直重复读）
-    this._speechStopTimer = setTimeout(() => {
-      this._speechStopTimer = null;
-      if (this._waitingForSpeech && SpeechModule.isListening) {
-        console.log('[Speech] 2.5s 强制停止，获取已有结果');
-        SpeechModule.recognition.stop();
-      }
-    }, 2500);
+    // 不再用固定计时器。drawWaveform 检测到说话后启动 3 秒录音窗口。
   },
 
   onCorrectAnswer(result, optionBtnEl) {
@@ -1054,6 +1046,23 @@ const App = {
         }
       }
 
+      // 检测用户开始说话 → 启动 3 秒录音窗口后强制获取结果
+      if (this._waitingForSpeech && !this._speechDetected && !this._speechStopTimer) {
+        const avg = data.reduce((a, b) => a + b, 0) / data.length;
+        if (avg > 15) {
+          this._speechDetected = true;
+          console.log('[Speech] 检测到说话，3秒后截取结果');
+          const prompt = document.querySelector('.speech-prompt');
+          if (prompt) prompt.textContent = '正在听...';
+          this._speechStopTimer = setTimeout(() => {
+            this._speechStopTimer = null;
+            if (this._waitingForSpeech && SpeechModule.isListening) {
+              console.log('[Speech] 3秒录音结束，获取结果');
+              SpeechModule.recognition.stop();
+            }
+          }, 3000);
+        }
+      }
     };
 
     draw();
@@ -1298,6 +1307,7 @@ const App = {
     this._waitingForSpeech = false;
     this._currentTypedCorrect = null;
     this._speechErrorCount = 0;
+    this._speechDetected = false;
     if (this._speechStopTimer) { clearTimeout(this._speechStopTimer); this._speechStopTimer = null; }
     this.stopWaveform();
     SpeechModule.stopListening();
