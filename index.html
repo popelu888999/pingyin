@@ -45,18 +45,18 @@
   <script src="js/data.js"></script>
   <script src="js/mastery.js"></script>
   <script src="js/error-book.js"></script>
-  <script src="js/speech.js?v=2"></script>
-  <script src="js/game.js?v=2"></script>
-  <script src="js/app.js?v=2"></script>
+  <script src="js/speech.js?v=3"></script>
+  <script src="js/game.js?v=3"></script>
+  <script src="js/app.js?v=3"></script>
   <script>
     // 页面加载：先加载 Vosk 模型，再隐藏加载画面
     window.addEventListener('load', async () => {
       const loadingText = document.querySelector('#loading p');
 
-      // 预加载 Vosk 语音模型（42MB，首次下载后浏览器缓存）
+      // 预加载 Vosk 语音模型（32MB，首次下载后浏览器缓存）
       if (SpeechModule.isSupported) {
         if (loadingText) loadingText.textContent = '正在加载语音模型...';
-        const modelUrl = new URL('model.tar.gz', window.location.href).href;
+        const modelUrl = new URL('model.tar.gz?v=2', window.location.href).href;
         const ok = await SpeechModule.loadModel(modelUrl);
         if (ok) {
           App._voskModelReady = true;
