@@ -287,10 +287,11 @@ const App = {
     // 保存参数以便重试
     this._lastLevelParams = { level, param1, param2 };
 
-    // 第1-3关: 加载 Vosk 模型 + 获取麦克风
+    // 第1-3关: 加载 Vosk 模型 + 获取麦克风（异步，保存 Promise 供 handleAnswer 等待）
     this._micAvailable = false;
+    this._voskLoadingPromise = null;
     if (level >= 1 && level <= 3 && SpeechModule.isSupported) {
-      this._initVoskAndMic();
+      this._voskLoadingPromise = this._initVoskAndMic();
     }
 
     let result;
@@ -343,24 +344,27 @@ const App = {
 
   // 加载 Vosk 模型 + 麦克风（第1-3关使用）
   async _initVoskAndMic() {
-    // 1. 加载 Vosk 模型（首次约 42MB，后续有缓存）
-    if (!this._voskModelReady) {
-      this.showFeedback('正在加载语音模型...', 'combo');
-      const ok = await SpeechModule.loadModel('model.tar.gz');
-      if (ok) {
-        this._voskModelReady = true;
-        console.log('[App] Vosk model ready');
-      } else {
-        console.warn('[App] Vosk model failed to load, speech disabled');
-        return;
+    try {
+      // 1. 如果模型还没加载（例如页面初始化时失败），重试一次
+      if (!this._voskModelReady) {
+        console.log('[App] 模型未就绪，尝试加载...');
+        const modelUrl = new URL('model.tar.gz', window.location.href).href;
+        const ok = await SpeechModule.loadModel(modelUrl);
+        if (ok) {
+          this._voskModelReady = true;
+        } else {
+          console.error('[App] Vosk 模型加载失败');
+          return;
+        }
       }
-    }
 
-    // 2. 获取麦克风权限
-    const micOk = await SpeechModule.initMicrophone();
-    this._micAvailable = micOk;
-    if (!micOk) {
-      console.warn('[App] Microphone not available');
+      // 2. 获取麦克风权限
+      console.log('[App] 请求麦克风权限...');
+      const micOk = await SpeechModule.initMicrophone();
+      this._micAvailable = micOk;
+      console.log('[App] 麦克风:', micOk ? '已获取' : '获取失败');
+    } catch (e) {
+      console.error('[App] _initVoskAndMic 异常:', e);
     }
   },
 
@@ -770,41 +774,54 @@ const App = {
     this.handleAnswer(answer, btnEl);
   },
 
-  handleAnswer(answer, optionBtnEl) {
+  async handleAnswer(answer, optionBtnEl) {
     const level = Game.state.currentLevel;
     const isLevel1to3 = level >= 1 && level <= 3;
 
     // For levels 1-3: if typing is correct, don't submit yet — enter speech phase
-    if (isLevel1to3 && this._micAvailable && !this._waitingForSpeech) {
+    if (isLevel1to3 && !this._waitingForSpeech) {
       const q = Game.getCurrentQuestion();
       if (!q) return;
       const isCorrect = answer.toLowerCase().trim() === q.answer.toLowerCase().trim();
 
       if (isCorrect) {
-        // Typing correct — enter speech verification phase
-        const input = document.getElementById('pinyin-input');
-        if (input) input.classList.add('correct');
-
-        this._waitingForSpeech = true;
-        this._currentTypedCorrect = q;
-        this._speechErrorCount = 0;
-
-        // Show synthesis result for level 3
-        if (q.type === 'liangpin') {
-          const synthResult = document.getElementById('synth-result');
-          if (synthResult) synthResult.textContent = `${q.hanzi} (${q.display})`;
+        // 如果 Vosk 还在加载中，先等待
+        if (!this._micAvailable && this._voskLoadingPromise) {
+          const input = document.getElementById('pinyin-input');
+          if (input) input.classList.add('correct');
+          this.showFeedback('语音模型加载中，请稍候...', 'combo');
+          await this._voskLoadingPromise;
         }
 
-        // Hide input area, show speech area
-        const inputArea = document.getElementById('input-area');
-        const speechArea = document.getElementById('speech-area');
-        if (inputArea) inputArea.style.display = 'none';
-        if (speechArea) speechArea.style.display = 'flex';
+        // 模型和麦克风都就绪时进入语音验证
+        if (this._micAvailable) {
+          // Typing correct — enter speech verification phase
+          const input = document.getElementById('pinyin-input');
+          if (input) input.classList.add('correct');
 
-        // Auto-start Vosk listening + waveform
-        this._startSpeechRecognition();
+          this._waitingForSpeech = true;
+          this._currentTypedCorrect = q;
+          this._speechErrorCount = 0;
 
-        return; // Don't submit to Game yet
+          // Show synthesis result for level 3
+          if (q.type === 'liangpin') {
+            const synthResult = document.getElementById('synth-result');
+            if (synthResult) synthResult.textContent = `${q.hanzi} (${q.display})`;
+          }
+
+          // Hide input area, show speech area
+          const inputArea = document.getElementById('input-area');
+          const speechArea = document.getElementById('speech-area');
+          if (inputArea) inputArea.style.display = 'none';
+          if (speechArea) speechArea.style.display = 'flex';
+
+          // Auto-start Vosk listening + waveform
+          this._startSpeechRecognition();
+
+          return; // Don't submit to Game yet
+        }
+        // 如果模型加载失败或麦克风不可用，降级为纯打字模式
+        console.warn('[App] Vosk 不可用，降级为纯打字模式');
       }
       // Typing wrong — fall through to normal flow (immediate wrong)
     }

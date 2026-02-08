@@ -28,7 +28,10 @@ const SpeechModule = {
 
   init() {
     this.isSupported = (typeof Vosk !== 'undefined');
-    console.log('[Vosk] isSupported:', this.isSupported);
+    console.log('[Vosk] init — typeof Vosk:', typeof Vosk, ', isSupported:', this.isSupported);
+    if (this.isSupported) {
+      console.log('[Vosk] Vosk object keys:', Object.keys(Vosk));
+    }
     return this.isSupported;
   },
 

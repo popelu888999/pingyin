@@ -49,12 +49,28 @@
   <script src="js/game.js"></script>
   <script src="js/app.js"></script>
   <script>
-    // 隐藏加载画面
-    window.addEventListener('load', () => {
+    // 页面加载：先加载 Vosk 模型，再隐藏加载画面
+    window.addEventListener('load', async () => {
+      const loadingText = document.querySelector('#loading p');
+
+      // 预加载 Vosk 语音模型（42MB，首次下载后浏览器缓存）
+      if (SpeechModule.isSupported) {
+        if (loadingText) loadingText.textContent = '正在加载语音模型...';
+        const modelUrl = new URL('model.tar.gz', window.location.href).href;
+        const ok = await SpeechModule.loadModel(modelUrl);
+        if (ok) {
+          App._voskModelReady = true;
+          console.log('[Init] Vosk 模型加载完成');
+        } else {
+          console.warn('[Init] Vosk 模型加载失败，语音功能不可用');
+        }
+      }
+
+      if (loadingText) loadingText.textContent = '准备完毕!';
       setTimeout(() => {
         document.getElementById('loading').classList.add('hidden');
         setTimeout(() => document.getElementById('loading').remove(), 500);
-      }, 800);
+      }, 300);
     });
   </script>
 </body>
