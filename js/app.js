@@ -853,55 +853,93 @@ const App = {
   _startSpeechRecognition() {
     if (!this._waitingForSpeech) return;
     if (this._speechStopTimer) { clearTimeout(this._speechStopTimer); this._speechStopTimer = null; }
-    this._speechDetected = false;
+
+    // 收集10秒内所有识别结果
+    this._speechResults = [];
 
     SpeechModule.startListening(
       (results) => {
-        if (this._speechStopTimer) { clearTimeout(this._speechStopTimer); this._speechStopTimer = null; }
         if (!this._waitingForSpeech) return;
-        // 过滤空结果 — 空识别不计为错误，静默重试
         const validResults = results.filter(r => r.trim().length > 0);
-        if (validResults.length === 0) {
-          console.log('[Speech] 空结果，静默重试');
-          this._speechDetected = false;
-          setTimeout(() => { if (this._waitingForSpeech) this._startSpeechRecognition(); }, 300);
-          return;
+        if (validResults.length > 0) {
+          this._speechResults.push(...validResults);
+          console.log('[Speech] 收集到结果:', validResults);
         }
-        // 识别到语音 — 检查是否匹配
-        const q = this._currentTypedCorrect;
-        if (!q) return;
-        const matched = SpeechModule.matchSpeechForPinyin(validResults, q.answer, q.hanzi);
-        if (matched) {
-          this.handleSpeechResult();
-        } else {
-          // 识别到内容但不匹配
-          this._speechErrorCount++;
-          Game.state.speechErrors = (Game.state.speechErrors || 0) + 1;
-          if (this._speechErrorCount >= 2) {
-            const qq = this._currentTypedCorrect;
-            if (qq) SpeechModule.playStandardSound(qq.answer, qq.hanzi);
-            this.showFeedback('听标准发音，请跟着读!', 'combo');
-            this.setCatMood('neutral');
-          } else {
-            this.showFeedback('再读一次!', 'wrong');
-            this.setCatMood('sad');
-          }
-          // 重启识别等待下次尝试
-          this._speechDetected = false;
-          setTimeout(() => { if (this._waitingForSpeech) this._startSpeechRecognition(); }, 1500);
+        // 识别结束后（continuous=false 会自动停），如果还在10秒内就重启继续收集
+        if (this._waitingForSpeech && this._speechStopTimer) {
+          setTimeout(() => {
+            if (this._waitingForSpeech && this._speechStopTimer) {
+              SpeechModule.startListening(null, null); // 复用已有回调
+              // 回调已经在上次 startListening 设置过，这里重新 start
+              SpeechModule.isListening = false; // 允许重新 start
+              SpeechModule.startListening(this._speechResultCb, this._speechErrorCb);
+            }
+          }, 200);
         }
       },
       (error) => {
-        if (this._speechStopTimer) { clearTimeout(this._speechStopTimer); this._speechStopTimer = null; }
-        // no-speech 或其他错误 — 静默重启
-        if (this._waitingForSpeech) {
-          console.log('[Speech] 错误后重启:', error);
-          this._speechDetected = false;
-          setTimeout(() => { if (this._waitingForSpeech) this._startSpeechRecognition(); }, 500);
+        // no-speech 或其他错误 — 在10秒窗口内继续重启
+        if (this._waitingForSpeech && this._speechStopTimer) {
+          console.log('[Speech] 录音中错误，继续:', error);
+          setTimeout(() => {
+            if (this._waitingForSpeech && this._speechStopTimer) {
+              SpeechModule.isListening = false;
+              SpeechModule.startListening(this._speechResultCb, this._speechErrorCb);
+            }
+          }, 300);
         }
       }
     );
-    // 不再用固定计时器。drawWaveform 检测到说话后启动 3 秒录音窗口。
+
+    // 保存回调引用，方便重启时复用
+    this._speechResultCb = SpeechModule.onResult;
+    this._speechErrorCb = SpeechModule.onError;
+
+    // 10秒后停止录音，用收集的所有结果做最终匹配
+    this._speechStopTimer = setTimeout(() => {
+      this._speechStopTimer = null;
+      SpeechModule.stopListening();
+      this._doSpeechMatch();
+    }, 10000);
+
+    // 更新提示
+    const prompt = document.querySelector('.speech-prompt');
+    if (prompt) prompt.textContent = '正在录音 (10秒)...';
+  },
+
+  // 10秒录音结束后的匹配判定
+  _doSpeechMatch() {
+    if (!this._waitingForSpeech) return;
+    const q = this._currentTypedCorrect;
+    if (!q) return;
+
+    const allResults = this._speechResults || [];
+    console.log('[Speech] 10秒录音结束，所有结果:', allResults, '期望:', q.answer);
+
+    if (allResults.length === 0) {
+      // 10秒内完全没有识别到内容 → 重新开始
+      this.showFeedback('没有听到声音，请再读一次!', 'wrong');
+      this.setCatMood('sad');
+      setTimeout(() => { if (this._waitingForSpeech) this._startSpeechRecognition(); }, 1500);
+      return;
+    }
+
+    const matched = SpeechModule.matchSpeechForPinyin(allResults, q.answer, q.hanzi);
+    if (matched) {
+      this.handleSpeechResult();
+    } else {
+      this._speechErrorCount++;
+      Game.state.speechErrors = (Game.state.speechErrors || 0) + 1;
+      if (this._speechErrorCount >= 2) {
+        SpeechModule.playStandardSound(q.answer, q.hanzi);
+        this.showFeedback('听标准发音，请跟着读!', 'combo');
+        this.setCatMood('neutral');
+      } else {
+        this.showFeedback('再读一次!', 'wrong');
+        this.setCatMood('sad');
+      }
+      setTimeout(() => { if (this._waitingForSpeech) this._startSpeechRecognition(); }, 2000);
+    }
   },
 
   onCorrectAnswer(result, optionBtnEl) {
@@ -1046,23 +1084,6 @@ const App = {
         }
       }
 
-      // 检测用户开始说话 → 启动 3 秒录音窗口后强制获取结果
-      if (this._waitingForSpeech && !this._speechDetected && !this._speechStopTimer) {
-        const avg = data.reduce((a, b) => a + b, 0) / data.length;
-        if (avg > 15) {
-          this._speechDetected = true;
-          console.log('[Speech] 检测到说话，3秒后截取结果');
-          const prompt = document.querySelector('.speech-prompt');
-          if (prompt) prompt.textContent = '正在听...';
-          this._speechStopTimer = setTimeout(() => {
-            this._speechStopTimer = null;
-            if (this._waitingForSpeech && SpeechModule.isListening) {
-              console.log('[Speech] 3秒录音结束，获取结果');
-              SpeechModule.recognition.stop();
-            }
-          }, 3000);
-        }
-      }
     };
 
     draw();
@@ -1307,7 +1328,6 @@ const App = {
     this._waitingForSpeech = false;
     this._currentTypedCorrect = null;
     this._speechErrorCount = 0;
-    this._speechDetected = false;
     if (this._speechStopTimer) { clearTimeout(this._speechStopTimer); this._speechStopTimer = null; }
     this.stopWaveform();
     SpeechModule.stopListening();
