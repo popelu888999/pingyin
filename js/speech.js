@@ -1,71 +1,138 @@
-// 《拼音大冒险》— 语音识别模块（Vosk 离线版）
+// 《拼音大冒险》— 语音识别模块（sherpa-onnx 离线版）
 
 const SpeechModule = {
-  // Vosk model (loaded once)
-  voskModel: null,
+  // sherpa-onnx 状态
+  isSupported: false,
   isModelLoaded: false,
   isModelLoading: false,
-  _modelLoadPromise: null,  // 防止重复加载的竞态条件
+  _modelLoadPromise: null,
+  _resolveLoad: null,
+  _onStatusChange: null,
 
-  // Per-session microphone stream
+  // sherpa-onnx 组件
+  _vad: null,
+  _buffer: null,
+  _recognizer: null,
+
+  // 麦克风 & 音频
   mediaStream: null,
-
-  // Per-question recognition session
-  recognizer: null,
   audioContext: null,
   sourceNode: null,
-  processorNode: null,  // ScriptProcessor feeds audio to Vosk
-  analyser: null,       // AnalyserNode for waveform visualization
+  processorNode: null,
+  analyser: null,
   dataArray: null,
   isListening: false,
-  isSupported: false,    // true when Vosk global exists
+  _recordSampleRate: 16000,
 
-  // Callbacks
+  // 回调
   onResult: null,
   onPartialResult: null,
-
-  // Collected results for the current recognition session
   _results: [],
 
   init() {
-    this.isSupported = (typeof Vosk !== 'undefined');
-    console.log('[Vosk] init — typeof Vosk:', typeof Vosk, ', isSupported:', this.isSupported);
-    if (this.isSupported) {
-      console.log('[Vosk] Vosk object keys:', Object.keys(Vosk));
-    }
+    this.isSupported = typeof WebAssembly !== 'undefined';
+    console.log('[Sherpa] init — WASM supported:', this.isSupported);
     return this.isSupported;
   },
 
-  // Load Vosk model (call once; safe to call multiple times concurrently)
-  loadModel(modelUrl, onProgress) {
+  // 配置 Emscripten Module 对象（在加载 WASM glue script 之前调用）
+  _setupModule() {
+    const self = this;
+
+    window.Module = {
+      locateFile: function(path, scriptDirectory) {
+        console.log('[Sherpa] locateFile:', path);
+        return scriptDirectory + path;
+      },
+      setStatus: function(status) {
+        if (status) console.log('[Sherpa] status:', status);
+        if (self._onStatusChange) self._onStatusChange(status);
+      },
+      onRuntimeInitialized: function() {
+        console.log('[Sherpa] WASM runtime initialized');
+        try {
+          // 创建 VAD（针对儿童单音节优化参数）
+          self._vad = createVad(Module, {
+            sileroVad: {
+              model: './silero_vad.onnx',
+              threshold: 0.40,
+              minSilenceDuration: 0.3,
+              minSpeechDuration: 0.15,
+              maxSpeechDuration: 10,
+              windowSize: 512,
+            },
+            tenVad: {
+              model: '',
+              threshold: 0.50,
+              minSilenceDuration: 0.50,
+              minSpeechDuration: 0.25,
+              maxSpeechDuration: 20,
+              windowSize: 256,
+            },
+            sampleRate: 16000,
+            numThreads: 1,
+            provider: 'cpu',
+            debug: 0,
+            bufferSizeInSeconds: 30,
+          });
+          console.log('[Sherpa] VAD created');
+
+          // 循环缓冲区
+          self._buffer = new CircularBuffer(30 * 16000, Module);
+
+          // 创建离线识别器（paraformer 中文小模型）
+          self._recognizer = new OfflineRecognizer({
+            modelConfig: {
+              paraformer: { model: './paraformer.onnx' },
+              tokens: './tokens.txt',
+              debug: 0,
+            },
+          }, Module);
+          console.log('[Sherpa] Recognizer created');
+
+          self.isModelLoaded = true;
+          self.isModelLoading = false;
+
+          if (self._resolveLoad) self._resolveLoad(true);
+        } catch (e) {
+          console.error('[Sherpa] Initialization failed:', e);
+          self.isModelLoading = false;
+          self._modelLoadPromise = null;
+          if (self._resolveLoad) self._resolveLoad(false);
+        }
+      }
+    };
+  },
+
+  // 加载模型（触发 WASM 下载，~94MB）
+  loadModel(onStatusChange) {
     if (this.isModelLoaded) return Promise.resolve(true);
-    // 如果已在加载中，返回同一个 Promise（避免竞态条件）
     if (this._modelLoadPromise) return this._modelLoadPromise;
 
-    this._modelLoadPromise = this._doLoadModel(modelUrl);
+    this._onStatusChange = onStatusChange;
+    this.isModelLoading = true;
+
+    this._setupModule();
+
+    this._modelLoadPromise = new Promise((resolve) => {
+      this._resolveLoad = resolve;
+    });
+
+    // 动态加载 Emscripten glue script（会自动下载 .data 和 .wasm）
+    const script = document.createElement('script');
+    script.src = 'sherpa/sherpa-onnx-wasm-main-vad-asr.js';
+    script.onerror = () => {
+      console.error('[Sherpa] Failed to load WASM glue script');
+      this.isModelLoading = false;
+      this._modelLoadPromise = null;
+      this._resolveLoad(false);
+    };
+    document.head.appendChild(script);
+
     return this._modelLoadPromise;
   },
 
-  async _doLoadModel(modelUrl) {
-    this.isModelLoading = true;
-    try {
-      console.log('[Vosk] Loading model from:', modelUrl);
-
-      this.voskModel = await Vosk.createModel(modelUrl);
-      this.voskModel.setLogLevel(-1);
-      this.isModelLoaded = true;
-      this.isModelLoading = false;
-      console.log('[Vosk] Model loaded successfully');
-      return true;
-    } catch (e) {
-      console.error('[Vosk] Failed to load model:', e);
-      this.isModelLoading = false;
-      this._modelLoadPromise = null;  // 允许重试
-      return false;
-    }
-  },
-
-  // Pre-acquire microphone (call once per game session)
+  // 获取麦克风权限
   initMicrophone() {
     if (this.mediaStream) return Promise.resolve(true);
     return navigator.mediaDevices.getUserMedia({
@@ -82,22 +149,19 @@ const SpeechModule = {
       return true;
     })
     .catch(e => {
-      console.error('[Vosk] getUserMedia failed:', e);
+      console.error('[Sherpa] getUserMedia failed:', e);
       return false;
     });
   },
 
-  // Start listening — creates recognizer + audio chain
-  // onResult(text): called for each final result
-  // onPartialResult(text): called for partial/interim results
+  // 开始录音识别
   startListening(onResult, onPartialResult) {
     if (!this.isModelLoaded || !this.mediaStream) {
-      console.warn('[Vosk] Cannot start: model loaded =', this.isModelLoaded, ', stream =', !!this.mediaStream);
+      console.warn('[Sherpa] Cannot start: model=', this.isModelLoaded, ', mic=', !!this.mediaStream);
       return false;
     }
 
     if (this.isListening) {
-      // Already listening, just update callbacks
       this.onResult = onResult;
       this.onPartialResult = onPartialResult;
       return true;
@@ -107,70 +171,96 @@ const SpeechModule = {
     this.onPartialResult = onPartialResult;
     this._results = [];
 
-    // Create AudioContext at 16kHz (Vosk model expects 16000Hz audio)
+    // 创建 AudioContext (16kHz)
     if (!this.audioContext || this.audioContext.state === 'closed') {
       this.audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
     }
 
-    const sampleRate = this.audioContext.sampleRate;
-    console.log('[Vosk] AudioContext sampleRate:', sampleRate);
+    this._recordSampleRate = this.audioContext.sampleRate;
+    console.log('[Sherpa] AudioContext sampleRate:', this._recordSampleRate);
 
-    // Create Vosk recognizer
-    try {
-      this.recognizer = new this.voskModel.KaldiRecognizer(sampleRate);
-    } catch (e) {
-      console.error('[Vosk] KaldiRecognizer creation failed:', e);
-      return false;
-    }
-
-    this.recognizer.on('result', (message) => {
-      const text = message.result.text;
-      if (text && text.trim()) {
-        console.log('[Vosk] Final result:', text);
-        this._results.push(text.trim());
-        if (this.onResult) this.onResult(text.trim());
-      }
-    });
-
-    this.recognizer.on('partialresult', (message) => {
-      const partial = message.result.partial;
-      if (partial && partial.trim()) {
-        if (this.onPartialResult) this.onPartialResult(partial.trim());
-      }
-    });
-
-    // Create audio source from microphone stream
+    // 麦克风 → 音频源
     this.sourceNode = this.audioContext.createMediaStreamSource(this.mediaStream);
 
-    // Create ScriptProcessor to feed audio to Vosk
-    this.processorNode = this.audioContext.createScriptProcessor(4096, 1, 1);
-    this.processorNode.onaudioprocess = (event) => {
-      try {
-        if (this.recognizer) {
-          this.recognizer.acceptWaveform(event.inputBuffer);
-        }
-      } catch (e) {
-        // ignore errors during shutdown
-      }
-    };
-
-    // Create AnalyserNode for waveform visualization
+    // AnalyserNode 用于声纹可视化
     this.analyser = this.audioContext.createAnalyser();
     this.analyser.fftSize = 256;
     this.dataArray = new Uint8Array(this.analyser.frequencyBinCount);
 
-    // Connect: source → analyser (for visualization)
-    //          source → processor → destination (for Vosk feeding)
+    // ScriptProcessor 喂数据给 VAD + ASR
+    this.processorNode = this.audioContext.createScriptProcessor(4096, 1, 1);
+
+    const self = this;
+    const expectedRate = 16000;
+    let speechDetected = false;
+
+    this.processorNode.onaudioprocess = function(e) {
+      if (!self.isListening) return;
+
+      let samples = new Float32Array(e.inputBuffer.getChannelData(0));
+
+      // 降采样（如果浏览器不支持 16kHz AudioContext）
+      if (self._recordSampleRate !== expectedRate) {
+        samples = self._downsample(samples, self._recordSampleRate, expectedRate);
+      }
+
+      // 推入循环缓冲区
+      self._buffer.push(samples);
+
+      // 以 windowSize 为步长喂给 VAD
+      const windowSize = self._vad.config.sileroVad.windowSize;
+      while (self._buffer.size() > windowSize) {
+        const s = self._buffer.get(self._buffer.head(), windowSize);
+        self._vad.acceptWaveform(s);
+        self._buffer.pop(windowSize);
+
+        // 检测到说话中
+        if (self._vad.isDetected() && !speechDetected) {
+          speechDetected = true;
+          if (self.onPartialResult) self.onPartialResult('(说话中...)');
+        }
+
+        if (!self._vad.isDetected()) {
+          speechDetected = false;
+        }
+
+        // 处理完整语音段
+        while (!self._vad.isEmpty()) {
+          const segment = self._vad.front();
+          self._vad.pop();
+
+          // 离线识别
+          try {
+            const stream = self._recognizer.createStream();
+            stream.acceptWaveform(expectedRate, segment.samples);
+            self._recognizer.decode(stream);
+            const result = self._recognizer.getResult(stream);
+            stream.free();
+
+            const text = result.text;
+            if (text && text.trim()) {
+              console.log('[Sherpa] Recognized:', text.trim());
+              self._results.push(text.trim());
+              if (self.onResult) self.onResult(text.trim());
+            }
+          } catch (err) {
+            console.error('[Sherpa] Recognition error:', err);
+          }
+        }
+      }
+    };
+
+    // 连接音频链路
     this.sourceNode.connect(this.analyser);
     this.sourceNode.connect(this.processorNode);
     this.processorNode.connect(this.audioContext.destination);
 
     this.isListening = true;
-    console.log('[Vosk] Listening started, sampleRate:', sampleRate);
+    console.log('[Sherpa] Listening started');
     return true;
   },
 
-  // Stop listening — returns all collected results
+  // 停止录音，返回收集的结果
   stopListening() {
     const results = this._results.slice();
 
@@ -185,25 +275,26 @@ const SpeechModule = {
     if (this.analyser) {
       this.analyser = null;
     }
-    if (this.recognizer) {
-      try { this.recognizer.remove(); } catch (e) {}
-      this.recognizer = null;
-    }
     if (this.audioContext) {
       this.audioContext.close().catch(() => {});
       this.audioContext = null;
     }
+
+    // 重置 VAD 和缓冲区（不销毁，下次复用）
+    if (this._vad) this._vad.reset();
+    if (this._buffer) this._buffer.reset();
+
     this.dataArray = null;
     this.isListening = false;
     this.onResult = null;
     this.onPartialResult = null;
     this._results = [];
 
-    console.log('[Vosk] Listening stopped, collected results:', results);
+    console.log('[Sherpa] Listening stopped, results:', results);
     return results;
   },
 
-  // Get frequency data for waveform visualization
+  // 获取频率数据（声纹可视化）
   getFrequencyData() {
     if (this.analyser && this.dataArray) {
       this.analyser.getByteFrequencyData(this.dataArray);
@@ -212,13 +303,34 @@ const SpeechModule = {
     return null;
   },
 
-  // Release microphone (call when exiting game)
+  // 释放麦克风
   releaseMicrophone() {
     this.stopListening();
     if (this.mediaStream) {
       this.mediaStream.getTracks().forEach(t => t.stop());
       this.mediaStream = null;
     }
+  },
+
+  // 降采样工具
+  _downsample(buffer, fromRate, toRate) {
+    if (fromRate === toRate) return buffer;
+    const ratio = fromRate / toRate;
+    const newLength = Math.round(buffer.length / ratio);
+    const result = new Float32Array(newLength);
+    let offsetResult = 0, offsetBuffer = 0;
+    while (offsetResult < result.length) {
+      const nextOffset = Math.round((offsetResult + 1) * ratio);
+      let accum = 0, count = 0;
+      for (let i = offsetBuffer; i < nextOffset && i < buffer.length; i++) {
+        accum += buffer[i];
+        count++;
+      }
+      result[offsetResult] = accum / count;
+      offsetResult++;
+      offsetBuffer = nextOffset;
+    }
+    return result;
   },
 
   // ==================== 标准发音 (TTS) ====================
@@ -271,9 +383,8 @@ const SpeechModule = {
 
   // 匹配语音识别结果（宽松匹配）
   matchSpeechForPinyin(results, pinyinKey, hanzi) {
-    // results can be a string array or single string
     const resultArr = Array.isArray(results) ? results : [results];
-    console.log('[Vosk] 匹配 识别结果:', resultArr, '期望:', pinyinKey, hanzi || '');
+    console.log('[Sherpa] 匹配 识别结果:', resultArr, '期望:', pinyinKey, hanzi || '');
 
     // 1. 汉字直接匹配
     if (hanzi) {
@@ -282,7 +393,7 @@ const SpeechModule = {
       }
     }
 
-    // 2. 拼音文本匹配（Vosk 可能返回拼音字母）
+    // 2. 拼音文本匹配
     const normalizedKey = pinyinKey.toLowerCase();
     for (const r of resultArr) {
       const normalized = r.replace(/\s+/g, '').toLowerCase();

@@ -16,7 +16,7 @@ const App = {
   _micAvailable: false,
   _speechErrorCount: 0,     // per-question speech errors
   _speechStopTimer: null,   // 强制停止识别的计时器
-  _voskModelReady: false,   // Vosk 模型是否已加载
+  _sherpaModelReady: false,   // sherpa-onnx 模型是否已加载
 
   LEVEL_INFO: [
     { id: 1, name: '回声森林', desc: '声母辨析', icon: '🌲', unlockScore: 0 },
@@ -287,11 +287,11 @@ const App = {
     // 保存参数以便重试
     this._lastLevelParams = { level, param1, param2 };
 
-    // 第1-3关: 加载 Vosk 模型 + 获取麦克风（异步，保存 Promise 供 handleAnswer 等待）
+    // 第1-3关: 加载 sherpa-onnx 模型 + 获取麦克风（异步，保存 Promise 供 handleAnswer 等待）
     this._micAvailable = false;
-    this._voskLoadingPromise = null;
+    this._sherpaLoadingPromise = null;
     if (level >= 1 && level <= 3 && SpeechModule.isSupported) {
-      this._voskLoadingPromise = this._initVoskAndMic();
+      this._sherpaLoadingPromise = this._initSherpaAndMic();
     }
 
     let result;
@@ -342,18 +342,17 @@ const App = {
     }, 2000);
   },
 
-  // 加载 Vosk 模型 + 麦克风（第1-3关使用）
-  async _initVoskAndMic() {
+  // 加载 sherpa-onnx 模型 + 麦克风（第1-3关使用）
+  async _initSherpaAndMic() {
     try {
       // 1. 如果模型还没加载（例如页面初始化时失败），重试一次
-      if (!this._voskModelReady) {
+      if (!this._sherpaModelReady) {
         console.log('[App] 模型未就绪，尝试加载...');
-        const modelUrl = new URL('model.tar.gz?v=2', window.location.href).href;
-        const ok = await SpeechModule.loadModel(modelUrl);
+        const ok = await SpeechModule.loadModel();
         if (ok) {
-          this._voskModelReady = true;
+          this._sherpaModelReady = true;
         } else {
-          console.error('[App] Vosk 模型加载失败');
+          console.error('[App] sherpa-onnx 模型加载失败');
           return;
         }
       }
@@ -364,7 +363,7 @@ const App = {
       this._micAvailable = micOk;
       console.log('[App] 麦克风:', micOk ? '已获取' : '获取失败');
     } catch (e) {
-      console.error('[App] _initVoskAndMic 异常:', e);
+      console.error('[App] _initSherpaAndMic 异常:', e);
     }
   },
 
@@ -785,12 +784,12 @@ const App = {
       const isCorrect = answer.toLowerCase().trim() === q.answer.toLowerCase().trim();
 
       if (isCorrect) {
-        // 如果 Vosk 还在加载中，先等待
-        if (!this._micAvailable && this._voskLoadingPromise) {
+        // 如果 sherpa-onnx 还在加载中，先等待
+        if (!this._micAvailable && this._sherpaLoadingPromise) {
           const input = document.getElementById('pinyin-input');
           if (input) input.classList.add('correct');
           this.showFeedback('语音模型加载中，请稍候...', 'combo');
-          await this._voskLoadingPromise;
+          await this._sherpaLoadingPromise;
         }
 
         // 模型和麦克风都就绪时进入语音验证
@@ -815,13 +814,13 @@ const App = {
           if (inputArea) inputArea.style.display = 'none';
           if (speechArea) speechArea.style.display = 'flex';
 
-          // Auto-start Vosk listening + waveform
+          // Auto-start speech listening + waveform
           this._startSpeechRecognition();
 
           return; // Don't submit to Game yet
         }
         // 如果模型加载失败或麦克风不可用，降级为纯打字模式
-        console.warn('[App] Vosk 不可用，降级为纯打字模式');
+        console.warn('[App] sherpa-onnx 不可用，降级为纯打字模式');
       }
       // Typing wrong — fall through to normal flow (immediate wrong)
     }
@@ -882,7 +881,7 @@ const App = {
     }, 800);
   },
 
-  // 启动10秒录音识别窗口（Vosk 持续识别，无需循环重启）
+  // 启动10秒录音识别窗口（sherpa-onnx 持续识别，无需循环重启）
   _startSpeechRecognition() {
     if (!this._waitingForSpeech) return;
     if (this._speechStopTimer) { clearTimeout(this._speechStopTimer); this._speechStopTimer = null; }
@@ -890,12 +889,12 @@ const App = {
 
     this._speechResults = [];
 
-    // Start Vosk listening with result callbacks
+    // Start sherpa-onnx listening with result callbacks
     const started = SpeechModule.startListening(
       // onResult: each final recognition result
       (text) => {
         this._speechResults.push(text);
-        console.log('[App] Vosk 识别到:', text);
+        console.log('[App] sherpa 识别到:', text);
         // 实时匹配：如果已匹配到，立即通过（不等10秒）
         if (this._waitingForSpeech && this._currentTypedCorrect) {
           const q = this._currentTypedCorrect;
@@ -916,7 +915,7 @@ const App = {
     );
 
     if (!started) {
-      console.warn('[App] Vosk startListening failed');
+      console.warn('[App] sherpa startListening failed');
       this.showFeedback('语音识别启动失败', 'wrong');
       return;
     }
@@ -960,7 +959,7 @@ const App = {
     if (!q) return;
 
     const allResults = this._speechResults || [];
-    console.log('[Vosk] 10秒结束，全部结果:', allResults, '期望:', q.answer);
+    console.log('[Sherpa] 10秒结束，全部结果:', allResults, '期望:', q.answer);
 
     if (allResults.length === 0) {
       this.showFeedback('没有听到声音，请再读一次!', 'wrong');

@@ -40,29 +40,40 @@
   <div id="app"></div>
 
   <!-- 按顺序加载脚本 -->
-  <script src="https://cdn.jsdelivr.net/npm/vosk-browser@0.0.8/dist/vosk.js"></script>
+  <script src="sherpa/sherpa-onnx-asr.js"></script>
+  <script src="sherpa/sherpa-onnx-vad.js"></script>
   <script src="js/pinyin-data.js"></script>
   <script src="js/data.js"></script>
   <script src="js/mastery.js"></script>
   <script src="js/error-book.js"></script>
-  <script src="js/speech.js?v=4"></script>
-  <script src="js/game.js?v=4"></script>
-  <script src="js/app.js?v=4"></script>
+  <script src="js/speech.js?v=5"></script>
+  <script src="js/game.js?v=5"></script>
+  <script src="js/app.js?v=5"></script>
   <script>
-    // 页面加载：先加载 Vosk 模型，再隐藏加载画面
+    // 页面加载：加载 sherpa-onnx 语音模型，再隐藏加载画面
     window.addEventListener('load', async () => {
       const loadingText = document.querySelector('#loading p');
 
-      // 预加载 Vosk 语音模型（32MB，首次下载后浏览器缓存）
+      // 预加载 sherpa-onnx 语音模型（~94MB WASM+data，首次下载后浏览器缓存）
       if (SpeechModule.isSupported) {
-        if (loadingText) loadingText.textContent = '正在加载语音模型...';
-        const modelUrl = new URL('model.tar.gz?v=2', window.location.href).href;
-        const ok = await SpeechModule.loadModel(modelUrl);
+        const ok = await SpeechModule.loadModel((status) => {
+          if (!status) return;
+          // 解析 Emscripten 下载进度
+          const match = status.match(/Downloading data\.\.\. \((\d+)\/(\d+)\)/);
+          if (match) {
+            const pct = (Number(match[1]) / Number(match[2]) * 100).toFixed(1);
+            if (loadingText) loadingText.textContent = `正在下载语音模型... ${pct}%`;
+          } else if (status.includes('Running')) {
+            if (loadingText) loadingText.textContent = '正在初始化语音引擎...';
+          } else {
+            if (loadingText) loadingText.textContent = '正在加载语音模型...';
+          }
+        });
         if (ok) {
-          App._voskModelReady = true;
-          console.log('[Init] Vosk 模型加载完成');
+          App._sherpaModelReady = true;
+          console.log('[Init] sherpa-onnx 模型加载完成');
         } else {
-          console.warn('[Init] Vosk 模型加载失败，语音功能不可用');
+          console.warn('[Init] sherpa-onnx 模型加载失败，语音功能不可用');
         }
       }
 
