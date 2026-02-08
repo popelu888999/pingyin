@@ -115,12 +115,13 @@ const SpeechModule = {
     this.onPartialResult = onPartialResult;
     this._results = [];
 
-    // Create AudioContext
+    // Create AudioContext at 16kHz (Vosk model expects 16000Hz audio)
     if (!this.audioContext || this.audioContext.state === 'closed') {
-      this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      this.audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
     }
 
     const sampleRate = this.audioContext.sampleRate;
+    console.log('[Vosk] AudioContext sampleRate:', sampleRate);
 
     // Create Vosk recognizer
     this.recognizer = new this.voskModel.KaldiRecognizer(sampleRate);
