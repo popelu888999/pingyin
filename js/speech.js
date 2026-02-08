@@ -43,6 +43,23 @@ const SpeechModule = {
 
     try {
       console.log('[Vosk] Loading model from:', modelUrl);
+      console.log('[Vosk] window.location.href:', window.location.href);
+      console.log('[Vosk] window.location.protocol:', window.location.protocol);
+
+      // 先测试 URL 是否可访问
+      try {
+        const testResp = await fetch(modelUrl, { method: 'HEAD' });
+        console.log('[Vosk] Model URL test:', testResp.status, testResp.statusText);
+        if (!testResp.ok) {
+          console.error('[Vosk] Model URL not accessible:', testResp.status);
+          this.isModelLoading = false;
+          return false;
+        }
+      } catch (fetchErr) {
+        console.error('[Vosk] Model URL fetch failed (可能是 file:// 协议):', fetchErr.message);
+        // file:// 协议下 fetch 不可用，但 Vosk Worker 也可能不行
+      }
+
       this.voskModel = await Vosk.createModel(modelUrl);
       this.voskModel.setLogLevel(-1);
       this.isModelLoaded = true;
