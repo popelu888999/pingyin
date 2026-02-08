@@ -42,7 +42,7 @@ const SpeechModule = {
     window.Module = {
       locateFile: function(path, scriptDirectory) {
         console.log('[Sherpa] locateFile:', path);
-        return scriptDirectory + path;
+        return 'sherpa/' + path;
       },
       setStatus: function(status) {
         if (status) console.log('[Sherpa] status:', status);
