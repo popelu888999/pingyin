@@ -348,7 +348,7 @@ const App = {
       // 1. 如果模型还没加载（例如页面初始化时失败），重试一次
       if (!this._voskModelReady) {
         console.log('[App] 模型未就绪，尝试加载...');
-        const modelUrl = new URL('model.tar.gz', window.location.href).href;
+        const modelUrl = new URL('model.tar.gz?v=2', window.location.href).href;
         const ok = await SpeechModule.loadModel(modelUrl);
         if (ok) {
           this._voskModelReady = true;

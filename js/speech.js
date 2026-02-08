@@ -5,6 +5,7 @@ const SpeechModule = {
   voskModel: null,
   isModelLoaded: false,
   isModelLoading: false,
+  _modelLoadPromise: null,  // 防止重复加载的竞态条件
 
   // Per-session microphone stream
   mediaStream: null,
@@ -35,30 +36,20 @@ const SpeechModule = {
     return this.isSupported;
   },
 
-  // Load Vosk model (call once, shows progress via callback)
-  async loadModel(modelUrl, onProgress) {
-    if (this.isModelLoaded) return true;
-    if (this.isModelLoading) return false;
-    this.isModelLoading = true;
+  // Load Vosk model (call once; safe to call multiple times concurrently)
+  loadModel(modelUrl, onProgress) {
+    if (this.isModelLoaded) return Promise.resolve(true);
+    // 如果已在加载中，返回同一个 Promise（避免竞态条件）
+    if (this._modelLoadPromise) return this._modelLoadPromise;
 
+    this._modelLoadPromise = this._doLoadModel(modelUrl);
+    return this._modelLoadPromise;
+  },
+
+  async _doLoadModel(modelUrl) {
+    this.isModelLoading = true;
     try {
       console.log('[Vosk] Loading model from:', modelUrl);
-      console.log('[Vosk] window.location.href:', window.location.href);
-      console.log('[Vosk] window.location.protocol:', window.location.protocol);
-
-      // 先测试 URL 是否可访问
-      try {
-        const testResp = await fetch(modelUrl, { method: 'HEAD' });
-        console.log('[Vosk] Model URL test:', testResp.status, testResp.statusText);
-        if (!testResp.ok) {
-          console.error('[Vosk] Model URL not accessible:', testResp.status);
-          this.isModelLoading = false;
-          return false;
-        }
-      } catch (fetchErr) {
-        console.error('[Vosk] Model URL fetch failed (可能是 file:// 协议):', fetchErr.message);
-        // file:// 协议下 fetch 不可用，但 Vosk Worker 也可能不行
-      }
 
       this.voskModel = await Vosk.createModel(modelUrl);
       this.voskModel.setLogLevel(-1);
@@ -69,6 +60,7 @@ const SpeechModule = {
     } catch (e) {
       console.error('[Vosk] Failed to load model:', e);
       this.isModelLoading = false;
+      this._modelLoadPromise = null;  // 允许重试
       return false;
     }
   },
@@ -124,7 +116,12 @@ const SpeechModule = {
     console.log('[Vosk] AudioContext sampleRate:', sampleRate);
 
     // Create Vosk recognizer
-    this.recognizer = new this.voskModel.KaldiRecognizer(sampleRate);
+    try {
+      this.recognizer = new this.voskModel.KaldiRecognizer(sampleRate);
+    } catch (e) {
+      console.error('[Vosk] KaldiRecognizer creation failed:', e);
+      return false;
+    }
 
     this.recognizer.on('result', (message) => {
       const text = message.result.text;
