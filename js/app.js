@@ -819,7 +819,6 @@ const App = {
     if (!this._waitingForSpeech || !this._currentTypedCorrect) return;
     if (this._speechStopTimer) { clearTimeout(this._speechStopTimer); this._speechStopTimer = null; }
     if (this._countdownTimer) { clearInterval(this._countdownTimer); this._countdownTimer = null; }
-    SpeechModule.recognition.continuous = false; // 恢复默认
 
     const q = this._currentTypedCorrect;
     this._waitingForSpeech = false;
@@ -851,63 +850,68 @@ const App = {
     }, 800);
   },
 
-  // 启动语音识别
+  // 启动10秒录音识别窗口
   _startSpeechRecognition() {
     if (!this._waitingForSpeech) return;
     if (this._speechStopTimer) { clearTimeout(this._speechStopTimer); this._speechStopTimer = null; }
+    if (this._countdownTimer) { clearInterval(this._countdownTimer); this._countdownTimer = null; }
 
-    // 收集10秒内所有识别结果
     this._speechResults = [];
+    this._recordingEndTime = Date.now() + 10000;
+    SpeechModule.recognition.continuous = false;
 
-    // 切换到 continuous 模式：一次 start()，持续录音10秒，不需要反复重启
-    SpeechModule.recognition.continuous = true;
-    SpeechModule.isListening = false; // 确保可以调用 start()
+    // 开始循环识别
+    this._doRecognitionCycle();
 
-    SpeechModule.startListening(
-      (results) => {
-        if (!this._waitingForSpeech) return;
-        const validResults = results.filter(r => r.trim().length > 0);
-        if (validResults.length > 0) {
-          this._speechResults.push(...validResults);
-          console.log('[Speech] 录音中收集:', validResults);
-        }
-        // continuous 模式下不需要重启，识别持续运行
-      },
-      (error) => {
-        // continuous 模式下识别意外停止 → 尝试重启继续录音
-        if (this._waitingForSpeech && this._speechStopTimer) {
-          console.log('[Speech] 录音中断，重启继续:', error);
-          SpeechModule.isListening = false;
-          try { SpeechModule.recognition.start(); SpeechModule.isListening = true; } catch(e) {}
-        }
-      }
-    );
-
-    // 10秒后停止录音，用收集的全部结果做匹配
+    // 10秒后强制结束，用收集的全部结果匹配
     this._speechStopTimer = setTimeout(() => {
       this._speechStopTimer = null;
-      SpeechModule.recognition.continuous = false; // 恢复默认
       SpeechModule.stopListening();
       this._doSpeechMatch();
     }, 10000);
 
-    // 更新提示 + 倒计时
+    // 倒计时UI
     const prompt = document.querySelector('.speech-prompt');
-    if (prompt) prompt.textContent = '正在录音... (10)';
+    if (prompt) prompt.textContent = '请大声读! (10)';
     this._countdownSec = 10;
     this._countdownTimer = setInterval(() => {
       this._countdownSec--;
-      if (this._countdownSec <= 0) {
+      const p = document.querySelector('.speech-prompt');
+      if (this._countdownSec > 0) {
+        if (p) p.textContent = `请大声读! (${this._countdownSec})`;
+      } else {
         clearInterval(this._countdownTimer);
         this._countdownTimer = null;
+        if (p) p.textContent = '识别中...';
       }
-      const p = document.querySelector('.speech-prompt');
-      if (p && this._countdownSec > 0) p.textContent = `正在录音... (${this._countdownSec})`;
-      else if (p) p.textContent = '识别中...';
     }, 1000);
   },
 
-  // 10秒录音结束后的匹配判定
+  // 在10秒窗口内循环执行识别（每次识别结束后立即重启）
+  _doRecognitionCycle() {
+    if (!this._waitingForSpeech || !this._speechStopTimer) return;
+    if (Date.now() >= this._recordingEndTime) return;
+
+    SpeechModule.isListening = false;
+    SpeechModule.startListening(
+      (results) => {
+        // 收集非空结果
+        const valid = results.filter(r => r.trim().length > 0);
+        if (valid.length > 0) {
+          this._speechResults.push(...valid);
+          console.log('[Speech] 收集到:', valid);
+        }
+        // 立即开始下一轮识别（10秒窗口内持续收集）
+        setTimeout(() => this._doRecognitionCycle(), 50);
+      },
+      (error) => {
+        // 识别失败（no-speech等），立即重试
+        setTimeout(() => this._doRecognitionCycle(), 100);
+      }
+    );
+  },
+
+  // 10秒录音结束后匹配判定
   _doSpeechMatch() {
     if (this._countdownTimer) { clearInterval(this._countdownTimer); this._countdownTimer = null; }
     if (!this._waitingForSpeech) return;
@@ -915,13 +919,11 @@ const App = {
     if (!q) return;
 
     const allResults = this._speechResults || [];
-    console.log('[Speech] 10秒录音结束，全部结果:', allResults, '期望:', q.answer);
+    console.log('[Speech] 10秒结束，全部结果:', allResults, '期望:', q.answer);
 
     if (allResults.length === 0) {
       this.showFeedback('没有听到声音，请再读一次!', 'wrong');
       this.setCatMood('sad');
-      const prompt = document.querySelector('.speech-prompt');
-      if (prompt) prompt.textContent = '现在请大声读出来!';
       setTimeout(() => { if (this._waitingForSpeech) this._startSpeechRecognition(); }, 1500);
       return;
     }
@@ -940,8 +942,6 @@ const App = {
         this.showFeedback('再读一次!', 'wrong');
         this.setCatMood('sad');
       }
-      const prompt = document.querySelector('.speech-prompt');
-      if (prompt) prompt.textContent = '现在请大声读出来!';
       setTimeout(() => { if (this._waitingForSpeech) this._startSpeechRecognition(); }, 2000);
     }
   },

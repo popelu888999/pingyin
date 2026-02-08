@@ -34,20 +34,19 @@ const SpeechModule = {
         }
         console.log('[Speech] onresult:', results);
         this._gotResult = true;
-        // continuous 模式下不停止，non-continuous 模式下标记停止
-        if (!this.recognition.continuous) this.isListening = false;
+        this.isListening = false;
         if (this.onResult) this.onResult(results);
       };
 
       this.recognition.onerror = (event) => {
         console.log('[Speech] onerror:', event.error);
         this._gotResult = true;
-        if (!this.recognition.continuous) this.isListening = false;
+        this.isListening = false;
         if (this.onError) this.onError(event.error);
       };
 
       this.recognition.onend = () => {
-        console.log('[Speech] onend, hadResult:', this._gotResult, 'continuous:', this.recognition.continuous);
+        console.log('[Speech] onend, hadResult:', this._gotResult);
         this.isListening = false;
         if (!this._gotResult && this.onError) {
           this.onError('no-speech');
