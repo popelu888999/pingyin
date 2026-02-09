@@ -9,7 +9,7 @@ const App = {
   level5Timer: null,
   level5TimeLeft: 0,
 
-  // Two-step speech verification state (levels 1-3)
+  // Two-step speech verification state (levels 1-4)
   _waitingForSpeech: false,
   _currentTypedCorrect: null,
   _waveformAnimFrame: null,
@@ -287,10 +287,10 @@ const App = {
     // 保存参数以便重试
     this._lastLevelParams = { level, param1, param2 };
 
-    // 第1-3关: 加载 sherpa-onnx 模型 + 获取麦克风（异步，保存 Promise 供 handleAnswer 等待）
+    // 第1-4关: 加载 sherpa-onnx 模型 + 获取麦克风（异步，保存 Promise 供 handleAnswer 等待）
     this._micAvailable = false;
     this._sherpaLoadingPromise = null;
-    if (level >= 1 && level <= 3 && SpeechModule.isSupported) {
+    if (level >= 1 && level <= 4 && SpeechModule.isSupported) {
       this._sherpaLoadingPromise = this._initSherpaAndMic();
     }
 
@@ -342,7 +342,7 @@ const App = {
     }, 2000);
   },
 
-  // 加载 sherpa-onnx 模型 + 麦克风（第1-3关使用）
+  // 加载 sherpa-onnx 模型 + 麦克风（第1-4关使用）
   async _initSherpaAndMic() {
     try {
       // 1. 如果模型还没加载（例如页面初始化时失败），重试一次
@@ -486,6 +486,11 @@ const App = {
               <div class="main-char" id="display-char"></div>
             </div>
             <div class="options-area" id="options-area"></div>
+            <div class="waveform-container" id="speech-area" style="display:none">
+              <div class="speech-prompt">现在请大声读出来!</div>
+              <button class="speech-btn" id="speech-btn" onclick="App.toggleSpeech()">🎤</button>
+              <canvas id="waveform-canvas" width="240" height="60"></canvas>
+            </div>
           </div>
         </div>
 
@@ -519,10 +524,15 @@ const App = {
               <div class="main-char" id="display-char"></div>
               <div class="sub-text" id="display-hint"></div>
             </div>
-            <div class="input-area">
+            <div class="input-area" id="input-area">
               <input type="text" class="pinyin-input" id="pinyin-input"
                      placeholder="输入拼音（不需要声调）" autocomplete="off" autocapitalize="off">
               <div class="input-hint">按 Enter 确认</div>
+            </div>
+            <div class="waveform-container" id="speech-area" style="display:none">
+              <div class="speech-prompt">现在请大声读出来!</div>
+              <button class="speech-btn" id="speech-btn" onclick="App.toggleSpeech()">🎤</button>
+              <canvas id="waveform-canvas" width="240" height="60"></canvas>
             </div>
           </div>
         </div>
@@ -649,13 +659,20 @@ const App = {
     const displayChar = document.getElementById('display-char');
     const displayHint = document.getElementById('display-hint');
     const optionsArea = document.getElementById('options-area');
+    const speechArea = document.getElementById('speech-area');
 
     if (displayChar) displayChar.textContent = q.display;
     if (displayHint) displayHint.textContent = '选出正确的汉字';
+    // Restore options visibility, hide speech area
     if (optionsArea) {
+      optionsArea.style.display = '';
       optionsArea.innerHTML = q.options.map(opt => `
         <button class="option-btn" onclick="App.submitOption('${opt}', this)">${opt}</button>
       `).join('');
+    }
+    if (speechArea) {
+      speechArea.style.display = 'none';
+      speechArea.classList.remove('active');
     }
   },
 
@@ -663,9 +680,17 @@ const App = {
     const displayChar = document.getElementById('display-char');
     const displayHint = document.getElementById('display-hint');
     const input = document.getElementById('pinyin-input');
+    const inputArea = document.getElementById('input-area');
+    const speechArea = document.getElementById('speech-area');
 
     if (displayChar) displayChar.textContent = q.display;
     if (displayHint) displayHint.textContent = '请输入这个字的拼音';
+    // Restore input area visibility, hide speech area
+    if (inputArea) inputArea.style.display = '';
+    if (speechArea) {
+      speechArea.style.display = 'none';
+      speechArea.classList.remove('active');
+    }
     if (input) {
       input.value = '';
       input.classList.remove('correct', 'wrong');
@@ -775,10 +800,10 @@ const App = {
 
   async handleAnswer(answer, optionBtnEl) {
     const level = Game.state.currentLevel;
-    const isLevel1to3 = level >= 1 && level <= 3;
+    const isLevel1to4 = level >= 1 && level <= 4;
 
-    // For levels 1-3: if typing is correct, don't submit yet — enter speech phase
-    if (isLevel1to3 && !this._waitingForSpeech) {
+    // For levels 1-4: if typing/selection is correct, don't submit yet — enter speech phase
+    if (isLevel1to4 && !this._waitingForSpeech) {
       const q = Game.getCurrentQuestion();
       if (!q) return;
       const isCorrect = answer.toLowerCase().trim() === q.answer.toLowerCase().trim();
@@ -794,13 +819,28 @@ const App = {
 
         // 模型和麦克风都就绪时进入语音验证
         if (this._micAvailable) {
-          // Typing correct — enter speech verification phase
+          // Typing/selection correct — enter speech verification phase
           const input = document.getElementById('pinyin-input');
           if (input) input.classList.add('correct');
 
           this._waitingForSpeech = true;
           this._currentTypedCorrect = q;
           this._speechErrorCount = 0;
+
+          // Determine speech match params based on question type
+          if (q.type === 'pinyin2hanzi') {
+            // Mode A: display=pinyin, answer=hanzi, input=pinyin without tone
+            this._speechPinyinKey = q.input;
+            this._speechHanzi = q.answer;
+          } else if (q.type === 'hanzi2pinyin') {
+            // Mode B: display=hanzi, answer=pinyin
+            this._speechPinyinKey = q.answer;
+            this._speechHanzi = q.display;
+          } else {
+            // Levels 1-3: shengmu/yunmu/liangpin
+            this._speechPinyinKey = q.answer;
+            this._speechHanzi = q.hanzi;
+          }
 
           // Show synthesis result for level 3
           if (q.type === 'liangpin') {
@@ -813,6 +853,13 @@ const App = {
           const speechArea = document.getElementById('speech-area');
           if (inputArea) inputArea.style.display = 'none';
           if (speechArea) speechArea.style.display = 'flex';
+
+          // For Mode A (multi-choice): highlight correct option, hide options
+          if (q.type === 'pinyin2hanzi' && optionBtnEl) {
+            optionBtnEl.classList.add('correct');
+            const optionsArea = document.getElementById('options-area');
+            if (optionsArea) optionsArea.style.display = 'none';
+          }
 
           // Auto-start speech listening + waveform
           this._startSpeechRecognition();
@@ -875,8 +922,11 @@ const App = {
     }
 
     setTimeout(() => {
+      // Restore input/options visibility for next question
       const inputArea = document.getElementById('input-area');
       if (inputArea) inputArea.style.display = '';
+      const optionsArea = document.getElementById('options-area');
+      if (optionsArea) optionsArea.style.display = '';
       this.showCurrentQuestion();
     }, 800);
   },
@@ -897,8 +947,7 @@ const App = {
         console.log('[App] sherpa 识别到:', text);
         // 实时匹配：如果已匹配到，立即通过（不等10秒）
         if (this._waitingForSpeech && this._currentTypedCorrect) {
-          const q = this._currentTypedCorrect;
-          if (SpeechModule.matchSpeechForPinyin(this._speechResults, q.answer, q.hanzi)) {
+          if (SpeechModule.matchSpeechForPinyin(this._speechResults, this._speechPinyinKey, this._speechHanzi)) {
             console.log('[App] 实时匹配成功!');
             // setTimeout to avoid stopListening inside recognizer callback
             setTimeout(() => this.handleSpeechResult(), 0);
@@ -959,7 +1008,9 @@ const App = {
     if (!q) return;
 
     const allResults = this._speechResults || [];
-    console.log('[Sherpa] 10秒结束，全部结果:', allResults, '期望:', q.answer);
+    const pinyinKey = this._speechPinyinKey;
+    const hanzi = this._speechHanzi;
+    console.log('[Sherpa] 10秒结束，全部结果:', allResults, '期望:', pinyinKey, hanzi);
 
     if (allResults.length === 0) {
       this._speechErrorCount++;
@@ -976,7 +1027,7 @@ const App = {
       return;
     }
 
-    const matched = SpeechModule.matchSpeechForPinyin(allResults, q.answer, q.hanzi);
+    const matched = SpeechModule.matchSpeechForPinyin(allResults, pinyinKey, hanzi);
     if (matched) {
       this.handleSpeechResult();
     } else {
@@ -984,14 +1035,14 @@ const App = {
       Game.state.speechErrors = (Game.state.speechErrors || 0) + 1;
       // 3次失败且确实检测到了语音 → 自动通过，避免孩子沮丧
       if (this._speechErrorCount >= 3 && allResults.length > 0) {
-        SpeechModule.playStandardSound(q.answer, q.hanzi);
+        SpeechModule.playStandardSound(pinyinKey, hanzi);
         this.showFeedback('不错，继续加油!', 'combo');
         this.setCatMood('neutral');
         setTimeout(() => this.handleSpeechResult(), 1500);
         return;
       }
       if (this._speechErrorCount >= 2) {
-        SpeechModule.playStandardSound(q.answer, q.hanzi);
+        SpeechModule.playStandardSound(pinyinKey, hanzi);
         this.showFeedback('听标准发音，请跟着读!', 'combo');
         this.setCatMood('neutral');
       } else {
@@ -1072,6 +1123,11 @@ const App = {
 
   // ==================== 标准发音重播 ====================
   replaySound() {
+    // Use stored speech params when in speech phase, else derive from current question
+    if (this._waitingForSpeech && this._speechPinyinKey) {
+      SpeechModule.playStandardSound(this._speechPinyinKey, this._speechHanzi);
+      return;
+    }
     const q = this._currentTypedCorrect || Game.getCurrentQuestion();
     if (!q) return;
     SpeechModule.playStandardSound(q.answer, q.hanzi);
@@ -1382,6 +1438,8 @@ const App = {
     this._waitingForSpeech = false;
     this._currentTypedCorrect = null;
     this._speechErrorCount = 0;
+    this._speechPinyinKey = null;
+    this._speechHanzi = null;
     if (this._speechStopTimer) { clearTimeout(this._speechStopTimer); this._speechStopTimer = null; }
     if (this._countdownTimer) { clearInterval(this._countdownTimer); this._countdownTimer = null; }
     this.stopWaveform();
