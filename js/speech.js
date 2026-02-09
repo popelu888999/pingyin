@@ -381,46 +381,54 @@ const SpeechModule = {
     'un': ['an', 'en'],
   },
 
-  // 匹配语音识别结果（宽松匹配）
+  // 匹配语音识别结果（基于拼音转换的宽松匹配）
   matchSpeechForPinyin(results, pinyinKey, hanzi) {
     const resultArr = Array.isArray(results) ? results : [results];
     console.log('[Sherpa] 匹配 识别结果:', resultArr, '期望:', pinyinKey, hanzi || '');
 
-    // 1. 汉字直接匹配
-    if (hanzi) {
-      for (const r of resultArr) {
-        if (r.includes(hanzi)) return true;
+    const normalizedKey = pinyinKey.toLowerCase();
+
+    for (const r of resultArr) {
+      // 1. 汉字直接匹配（level 3/4 知道确切汉字时）
+      if (hanzi && r.includes(hanzi)) return true;
+
+      // 2. 拼音文本匹配（识别结果本身含拼音文本）
+      const normalized = r.replace(/\s+/g, '').toLowerCase();
+      if (normalized === normalizedKey || normalized.includes(normalizedKey)) return true;
+
+      // 3. 拼音转换匹配（核心改进）
+      // 将每个识别到的汉字转成拼音，检查是否包含期望的声母/韵母
+      if (typeof lookupPinyin === 'function') {
+        const pinyinArr = lookupPinyin(r.replace(/\s+/g, ''));
+        for (const py of pinyinArr) {
+          // 精确匹配或包含匹配
+          // e.g. expected "b", recognized "波" → pinyin "bo" → "bo".startsWith("b") → PASS
+          // e.g. expected "ang", recognized "昂" → pinyin "ang" → "ang".includes("ang") → PASS
+          if (py === normalizedKey) return true;
+          if (py.includes(normalizedKey)) return true;
+          if (normalizedKey.includes(py) && py.length > 0) return true;
+        }
+
+        // 4. 拼音转换 + 混淆音匹配
+        const confused = this.CONFUSED_SOUNDS[pinyinKey];
+        if (confused) {
+          for (const py of pinyinArr) {
+            for (const partner of confused) {
+              if (py === partner) return true;
+              if (py.includes(partner)) return true;
+              if (py.startsWith(partner)) return true;
+            }
+          }
+        }
       }
     }
 
-    // 2. 拼音文本匹配
-    const normalizedKey = pinyinKey.toLowerCase();
-    for (const r of resultArr) {
-      const normalized = r.replace(/\s+/g, '').toLowerCase();
-      if (normalized === normalizedKey || normalized.includes(normalizedKey)) return true;
-    }
-
-    // 3. SPEECH_MATCH 字符集匹配
+    // 5. 降级：旧 SPEECH_MATCH 字符集（安全网，查找表未覆盖时）
     const chars = this.SPEECH_MATCH[pinyinKey];
     if (chars) {
       for (const r of resultArr) {
         for (const char of chars) {
           if (r.includes(char)) return true;
-        }
-      }
-    }
-
-    // 4. 近似音宽松匹配（儿童混淆音）
-    const confused = this.CONFUSED_SOUNDS[pinyinKey];
-    if (confused) {
-      for (const partner of confused) {
-        const partnerChars = this.SPEECH_MATCH[partner];
-        if (partnerChars) {
-          for (const r of resultArr) {
-            for (const char of partnerChars) {
-              if (r.includes(char)) return true;
-            }
-          }
         }
       }
     }
