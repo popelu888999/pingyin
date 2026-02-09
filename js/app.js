@@ -802,11 +802,14 @@ const App = {
     const level = Game.state.currentLevel;
     const isLevel1to4 = level >= 1 && level <= 4;
 
+    console.log('[handleAnswer] level:', level, 'isLevel1to4:', isLevel1to4, 'waitingForSpeech:', this._waitingForSpeech, 'micAvailable:', this._micAvailable, 'answer:', answer);
+
     // For levels 1-4: if typing/selection is correct, don't submit yet — enter speech phase
     if (isLevel1to4 && !this._waitingForSpeech) {
       const q = Game.getCurrentQuestion();
       if (!q) return;
       const isCorrect = answer.toLowerCase().trim() === q.answer.toLowerCase().trim();
+      console.log('[handleAnswer] q.type:', q.type, 'q.answer:', q.answer, 'isCorrect:', isCorrect);
 
       if (isCorrect) {
         // 如果 sherpa-onnx 还在加载中，先等待
