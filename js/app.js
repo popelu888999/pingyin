@@ -962,6 +962,14 @@ const App = {
     console.log('[Sherpa] 10秒结束，全部结果:', allResults, '期望:', q.answer);
 
     if (allResults.length === 0) {
+      this._speechErrorCount++;
+      // 连续3次没听到声音 → 自动通过（可能是麦克风问题）
+      if (this._speechErrorCount >= 3) {
+        this.showFeedback('继续下一题吧!', 'combo');
+        this.setCatMood('neutral');
+        setTimeout(() => this.handleSpeechResult(), 1000);
+        return;
+      }
       this.showFeedback('没有听到声音，请再读一次!', 'wrong');
       this.setCatMood('sad');
       setTimeout(() => { if (this._waitingForSpeech) this._startSpeechRecognition(); }, 1500);
@@ -974,6 +982,14 @@ const App = {
     } else {
       this._speechErrorCount++;
       Game.state.speechErrors = (Game.state.speechErrors || 0) + 1;
+      // 3次失败且确实检测到了语音 → 自动通过，避免孩子沮丧
+      if (this._speechErrorCount >= 3 && allResults.length > 0) {
+        SpeechModule.playStandardSound(q.answer, q.hanzi);
+        this.showFeedback('不错，继续加油!', 'combo');
+        this.setCatMood('neutral');
+        setTimeout(() => this.handleSpeechResult(), 1500);
+        return;
+      }
       if (this._speechErrorCount >= 2) {
         SpeechModule.playStandardSound(q.answer, q.hanzi);
         this.showFeedback('听标准发音，请跟着读!', 'combo');
