@@ -1467,11 +1467,76 @@ body {
   margin-top: 8px;
 }
 
+/* 已知用户卡片列表 */
+.auth-player-list {
+  display: flex;
+  gap: 16px;
+  margin-top: 20px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.auth-player-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: rgba(255,255,255,0.25);
+  border: 3px solid rgba(255,255,255,0.5);
+  border-radius: 20px;
+  padding: 16px 20px;
+  cursor: pointer;
+  transition: all 0.15s;
+  min-width: 90px;
+}
+
+.auth-player-card:active {
+  transform: scale(0.93);
+  background: rgba(255,255,255,0.4);
+}
+
+.auth-player-avatar {
+  font-size: 40px;
+}
+
+.auth-player-name {
+  color: white;
+  font-size: 16px;
+  font-weight: bold;
+  margin-top: 6px;
+}
+
+.auth-player-avatar-big {
+  font-size: 64px;
+  margin-bottom: 4px;
+}
+
+.auth-divider {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  max-width: 280px;
+  margin: 20px 0 0;
+  color: rgba(255,255,255,0.5);
+  font-size: 14px;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: rgba(255,255,255,0.3);
+}
+
+.auth-divider span {
+  padding: 0 12px;
+}
+
 .auth-buttons {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  margin-top: 40px;
+  margin-top: 20px;
   width: 100%;
   max-width: 280px;
 }
