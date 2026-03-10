@@ -28,7 +28,7 @@ const AuthUI = {
 
     try {
       await auth.signInAnonymously();
-      const doc = await db.doc(`players/${pin}/profile`).get();
+      const doc = await db.doc(`players/${pin}`).get();
       if (!doc.exists) {
         // PIN 不存在了，重新登录
         localStorage.removeItem(this.PIN_STORAGE_KEY);
@@ -177,7 +177,7 @@ const AuthUI = {
       await auth.signInAnonymously();
 
       // 检查 PIN 是否已被占用
-      const existing = await db.doc(`players/${pin}/profile`).get();
+      const existing = await db.doc(`players/${pin}`).get();
       if (existing.exists) {
         errEl.textContent = '这个密码已被使用，换一个吧';
         btn.textContent = '开始冒险!';
@@ -186,7 +186,7 @@ const AuthUI = {
       }
 
       // 创建档案
-      await db.doc(`players/${pin}/profile`).set({
+      await db.doc(`players/${pin}`).set({
         displayName: name,
         createdAt: firebase.firestore.FieldValue.serverTimestamp()
       });
@@ -220,7 +220,7 @@ const AuthUI = {
     try {
       await auth.signInAnonymously();
 
-      const doc = await db.doc(`players/${pin}/profile`).get();
+      const doc = await db.doc(`players/${pin}`).get();
       if (!doc.exists) {
         errEl.textContent = '密码不对哦，再试试?';
         btn.textContent = '进入!';
