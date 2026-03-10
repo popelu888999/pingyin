@@ -1010,6 +1010,124 @@ body {
   margin-bottom: 15px;
 }
 
+/* ==================== 复习页 SM-2 增强 ==================== */
+.review-item .char-display {
+  font-size: 36px;
+  width: 60px;
+  text-align: center;
+  color: var(--pink);
+}
+
+.review-item .error-info {
+  flex: 1;
+  margin-left: 15px;
+}
+
+.review-item .error-info .pinyin-label {
+  font-size: 16px;
+  color: #666;
+}
+
+.review-item .error-info .error-count {
+  font-size: 13px;
+  color: #999;
+}
+
+.review-item .progress-dots {
+  display: flex;
+  gap: 6px;
+}
+
+.review-item.urgent {
+  border-left: 4px solid var(--red);
+  background: #fff5f5;
+}
+
+.urgent-notice {
+  background: linear-gradient(135deg, #ff6b6b, #ff8e8e);
+  color: white;
+  padding: 10px 16px;
+  border-radius: 12px;
+  text-align: center;
+  font-size: 14px;
+  font-weight: bold;
+  margin-bottom: 12px;
+}
+
+.plan-summary {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #888;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.diff-tag {
+  display: inline-block;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  margin-left: 4px;
+  font-weight: bold;
+}
+
+.diff-tag.easy {
+  background: #e8f5e9;
+  color: #4caf50;
+}
+
+.diff-tag.medium {
+  background: #fff3e0;
+  color: #ff9800;
+}
+
+.diff-tag.hard {
+  background: #fce4ec;
+  color: #e91e63;
+}
+
+.overdue-tag {
+  display: inline-block;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: #fce4ec;
+  color: #e91e63;
+  font-weight: bold;
+}
+
+.overdue-tag.mild {
+  background: #fff3e0;
+  color: #ff9800;
+}
+
+.hardest-section {
+  margin-bottom: 16px;
+}
+
+.hardest-chars {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.hardest-char {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  background: linear-gradient(135deg, #fce4ec, #fff0f5);
+  border: 2px solid #e91e63;
+  border-radius: 12px;
+  font-size: 22px;
+  color: #e91e63;
+  font-weight: bold;
+}
+
 /* ==================== 成就页 ==================== */
 .achievement-page {
   padding: 20px;
@@ -1317,4 +1435,345 @@ body {
 
 @keyframes fadeOut {
   to { opacity: 0; pointer-events: none; }
+}
+
+/* ==================== 登录/注册页 ==================== */
+.auth-page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 30px 20px;
+  background: linear-gradient(135deg, #ff69b4, #ff85c8, #ffb6c1);
+  position: relative;
+}
+
+.auth-heart {
+  font-size: 80px;
+  animation: pulse 1s infinite;
+}
+
+.auth-title {
+  font-size: 32px;
+  color: white;
+  margin-top: 10px;
+  text-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+
+.auth-subtitle {
+  font-size: 16px;
+  color: rgba(255,255,255,0.85);
+  margin-top: 8px;
+}
+
+.auth-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 40px;
+  width: 100%;
+  max-width: 280px;
+}
+
+.auth-btn {
+  font-size: 20px;
+  padding: 16px 24px;
+  border-radius: 20px;
+  border: none;
+  cursor: pointer;
+  font-weight: bold;
+  transition: transform 0.15s;
+}
+
+.auth-btn:active {
+  transform: scale(0.95);
+}
+
+.btn-secondary {
+  background: white;
+  color: var(--pink);
+}
+
+.auth-skip {
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.6);
+  font-size: 14px;
+  margin-top: 30px;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.auth-back {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  background: rgba(255,255,255,0.3);
+  color: white;
+  border: none;
+  font-size: 24px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.auth-form {
+  width: 100%;
+  max-width: 300px;
+  margin-top: 30px;
+}
+
+.auth-label {
+  display: block;
+  color: white;
+  font-size: 14px;
+  margin-bottom: 6px;
+  margin-top: 16px;
+}
+
+.auth-input {
+  width: 100%;
+  padding: 12px 16px;
+  border: 2px solid rgba(255,255,255,0.5);
+  border-radius: 14px;
+  background: rgba(255,255,255,0.9);
+  font-size: 18px;
+  outline: none;
+  text-align: center;
+}
+
+.auth-input:focus {
+  border-color: white;
+}
+
+/* PIN 显示 */
+.pin-display {
+  display: flex;
+  justify-content: center;
+  gap: 14px;
+  margin: 16px 0;
+}
+
+.pin-dot {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 3px solid rgba(255,255,255,0.6);
+  background: transparent;
+  transition: all 0.15s;
+}
+
+.pin-dot.filled {
+  background: white;
+  border-color: white;
+  box-shadow: 0 0 10px rgba(255,255,255,0.5);
+}
+
+/* PIN 数字键盘 */
+.pin-pad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin: 16px auto;
+  max-width: 240px;
+}
+
+.pin-key {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 60px;
+  height: 60px;
+  margin: 0 auto;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.25);
+  color: white;
+  font-size: 24px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: all 0.1s;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.pin-key:active {
+  background: rgba(255,255,255,0.5);
+  transform: scale(0.9);
+}
+
+.pin-key.empty {
+  background: none;
+  cursor: default;
+}
+
+.pin-key.del {
+  font-size: 20px;
+}
+
+.auth-error {
+  color: #ffe0e0;
+  font-size: 14px;
+  text-align: center;
+  min-height: 20px;
+  margin: 8px 0;
+}
+
+.auth-submit {
+  width: 100%;
+  margin-top: 10px;
+  font-size: 20px;
+  padding: 14px;
+}
+
+.auth-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  color: var(--pink);
+  font-size: 18px;
+}
+
+/* 地图页玩家名 */
+.player-name-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.player-name {
+  font-size: 14px;
+  color: white;
+  background: rgba(255,255,255,0.2);
+  padding: 2px 10px;
+  border-radius: 10px;
+}
+
+/* ==================== 个人中心页 ==================== */
+.profile-page {
+  padding: 20px;
+  padding-bottom: 100px;
+}
+
+.profile-header {
+  text-align: center;
+  margin: 10px 0 20px;
+}
+
+.profile-avatar {
+  font-size: 60px;
+  margin-bottom: 8px;
+}
+
+.profile-name {
+  font-size: 22px;
+  font-weight: bold;
+  color: var(--pink);
+}
+
+.profile-sync-status {
+  margin-top: 6px;
+  font-size: 13px;
+}
+
+.sync-on {
+  color: #4caf50;
+  background: #e8f5e9;
+  padding: 2px 10px;
+  border-radius: 10px;
+}
+
+.sync-off {
+  color: #999;
+  background: #f5f5f5;
+  padding: 2px 10px;
+  border-radius: 10px;
+}
+
+.profile-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.profile-stat {
+  background: white;
+  border-radius: 14px;
+  padding: 12px 6px;
+  text-align: center;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+}
+
+.profile-stat-num {
+  font-size: 20px;
+  font-weight: bold;
+  color: var(--pink);
+}
+
+.profile-stat-label {
+  font-size: 11px;
+  color: #999;
+  margin-top: 2px;
+}
+
+.curve-card {
+  background: white;
+  border-radius: 16px;
+  padding: 16px;
+  margin-bottom: 16px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+  text-align: center;
+}
+
+.curve-card canvas {
+  max-width: 100%;
+  height: auto;
+}
+
+.curve-legend {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: #888;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.legend-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.profile-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.profile-action-btn {
+  width: 100%;
+  padding: 12px;
+  border-radius: 14px;
+  font-size: 16px;
+  border: 2px solid var(--pink-light);
+  background: white;
+  color: var(--pink);
+  cursor: pointer;
+}
+
+.profile-action-btn.danger {
+  border-color: #ffcdd2;
+  color: #e57373;
 }

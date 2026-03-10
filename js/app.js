@@ -38,6 +38,30 @@ const App = {
     { id: 'king', name: '拼音国王', icon: '🏆', condition: () => Game.progress.levelStars[5] >= 2 }
   ],
 
+  // ==================== 底部导航（统一） ====================
+  renderBottomNav(activePage) {
+    const reviewCount = MasterySystem.getReviewCount();
+    const errorCount = ErrorBook.getErrorCount();
+    const tabs = [
+      { page: 'map', icon: '🗺️', label: '地图' },
+      { page: 'review', icon: '📖', label: '复习', badge: reviewCount },
+      { page: 'error', icon: '💝', label: '错题本', badge: errorCount },
+      { page: 'achievement', icon: '🏆', label: '成就' },
+      { page: 'profile', icon: '👤', label: '我的' }
+    ];
+    return `
+      <div class="bottom-nav">
+        ${tabs.map(t => `
+          <div class="nav-item ${t.page === activePage ? 'active' : ''}" onclick="App.showPage('${t.page}')">
+            <div class="nav-icon">${t.icon}</div>
+            <span class="nav-label">${t.label}</span>
+            ${t.badge ? `<span class="nav-badge">${t.badge}</span>` : ''}
+          </div>
+        `).join('')}
+      </div>
+    `;
+  },
+
   // ==================== 初始化 ====================
   init() {
     Game.init();
@@ -62,6 +86,7 @@ const App = {
       case 'error': this.renderErrorPage(container); break;
       case 'review': this.renderReviewPage(container); break;
       case 'achievement': this.renderAchievementPage(container); break;
+      case 'profile': this.renderProfilePage(container); break;
     }
   },
 
@@ -103,9 +128,10 @@ const App = {
     container.innerHTML = `
       <div class="page active map-page">
         <div class="top-bar">
-          <div class="avatar">🐱</div>
-          <div class="score-display">
-            💰 ${Game.progress.totalScore}
+          <div class="avatar" ${typeof AuthUI !== 'undefined' && AuthUI.isLoggedIn() ? 'onclick="AuthUI.logout()" title="点击登出"' : ''}>🐱</div>
+          <div class="player-name-bar">
+            ${typeof AuthUI !== 'undefined' && AuthUI.getPlayerName() ? `<span class="player-name">${AuthUI.getPlayerName()}</span>` : ''}
+            <span class="score-display">💰 ${Game.progress.totalScore}</span>
           </div>
           <div class="combo-display">
             最高连击 ${Game.progress.maxCombo}
@@ -123,26 +149,7 @@ const App = {
           ${levelsHTML}
         </div>
 
-        <div class="bottom-nav">
-          <div class="nav-item active" onclick="App.showPage('map')">
-            <div class="nav-icon">🗺️</div>
-            <span class="nav-label">地图</span>
-          </div>
-          <div class="nav-item" onclick="App.showPage('review')">
-            <div class="nav-icon">📖</div>
-            <span class="nav-label">复习</span>
-            ${reviewCount > 0 ? `<span class="nav-badge">${reviewCount}</span>` : ''}
-          </div>
-          <div class="nav-item" onclick="App.showPage('error')">
-            <div class="nav-icon">💝</div>
-            <span class="nav-label">错题本</span>
-            ${errorCount > 0 ? `<span class="nav-badge">${errorCount}</span>` : ''}
-          </div>
-          <div class="nav-item" onclick="App.showPage('achievement')">
-            <div class="nav-icon">🏆</div>
-            <span class="nav-label">成就</span>
-          </div>
-        </div>
+        ${this.renderBottomNav('map')}
       </div>
     `;
   },
@@ -1507,20 +1514,7 @@ const App = {
           </div>
         ` : ''}
 
-        <div class="bottom-nav">
-          <div class="nav-item" onclick="App.showPage('map')">
-            <div class="nav-icon">🗺️</div><span class="nav-label">地图</span>
-          </div>
-          <div class="nav-item" onclick="App.showPage('review')">
-            <div class="nav-icon">📖</div><span class="nav-label">复习</span>
-          </div>
-          <div class="nav-item active" onclick="App.showPage('error')">
-            <div class="nav-icon">💝</div><span class="nav-label">错题本</span>
-          </div>
-          <div class="nav-item" onclick="App.showPage('achievement')">
-            <div class="nav-icon">🏆</div><span class="nav-label">成就</span>
-          </div>
-        </div>
+        ${this.renderBottomNav('error')}
       </div>
     `;
   },
@@ -1550,7 +1544,17 @@ const App = {
 
   // ==================== 复习页 ====================
   renderReviewPage(container) {
+    const plan = MasterySystem.getDailyPlan();
+    const stats = MasterySystem.getStats();
     const reviewItems = MasterySystem.getReviewItems();
+
+    // 难度标签
+    const difficultyLabel = (ef) => {
+      if (ef == null) return '';
+      if (ef >= 2.3) return '<span class="diff-tag easy">简单</span>';
+      if (ef >= 1.8) return '<span class="diff-tag medium">一般</span>';
+      return '<span class="diff-tag hard">困难</span>';
+    };
 
     let listHTML = '';
     if (reviewItems.length === 0) {
@@ -1561,21 +1565,55 @@ const App = {
         </div>
       `;
     } else {
-      listHTML = reviewItems.map(item => {
+      // 超期提示
+      const urgentCount = reviewItems.filter(i => MasterySystem.overdueDays(i) >= 3).length;
+      if (urgentCount > 0) {
+        listHTML += `<div class="urgent-notice">有 ${urgentCount} 个字超期3天以上未复习!</div>`;
+      }
+
+      // 每日计划摘要
+      listHTML += `
+        <div class="plan-summary">
+          <span>今日计划: 必练 ${plan.must.length}</span>
+          ${plan.optional.length > 0 ? `<span> / 选练 ${plan.optional.length}</span>` : ''}
+          ${plan.deferred.length > 0 ? `<span> / 待复习 ${plan.deferred.length}</span>` : ''}
+        </div>
+      `;
+
+      listHTML += reviewItems.map(item => {
         const levelBars = Array(5).fill(0).map((_, i) =>
           `<div class="progress-dot ${i < item.masteryLevel ? 'filled' : ''}"></div>`
         ).join('');
+        const overdue = MasterySystem.overdueDays(item);
+        const overdueTag = overdue >= 3
+          ? `<span class="overdue-tag">超期${overdue}天</span>`
+          : overdue > 0
+            ? `<span class="overdue-tag mild">超期${overdue}天</span>`
+            : '';
         return `
-          <div class="review-item">
+          <div class="review-item${overdue >= 3 ? ' urgent' : ''}">
             <div class="char-display">${item.char}</div>
             <div class="error-info">
-              <div class="pinyin-label">掌握度: ${item.masteryLevel}/5</div>
-              <div class="error-count">上次练习: ${item.lastPracticeDate || '从未'}</div>
+              <div class="pinyin-label">掌握度: ${item.masteryLevel}/5 ${difficultyLabel(item.easeFactor)}</div>
+              <div class="error-count">上次: ${item.lastPracticeDate || '从未'} ${overdueTag}</div>
             </div>
             <div class="progress-dots">${levelBars}</div>
           </div>
         `;
       }).join('');
+    }
+
+    // 最难的字（SM-2 难度因子最低的）
+    let hardestHTML = '';
+    if (stats.hardest && stats.hardest.length > 0) {
+      hardestHTML = `
+        <div class="hardest-section">
+          <div class="section-subtitle">最需要加油的字</div>
+          <div class="hardest-chars">
+            ${stats.hardest.map(h => `<span class="hardest-char">${h.char}</span>`).join('')}
+          </div>
+        </div>
+      `;
     }
 
     container.innerHTML = `
@@ -1585,35 +1623,24 @@ const App = {
           <div style="font-size:20px;font-weight:bold">复习时间</div>
           <div></div>
         </div>
-        <div class="section-subtitle">根据遗忘曲线安排的复习内容</div>
+        <div class="section-subtitle">SM-2 智能复习 - 难的字练得更多</div>
+        ${hardestHTML}
         <div class="review-list">${listHTML}</div>
 
         ${reviewItems.length > 0 ? `
           <div style="text-align:center;margin:20px">
-            <button class="btn btn-primary" onclick="App.startReviewPractice()">开始复习</button>
+            <button class="btn btn-primary" onclick="App.startReviewPractice()">开始复习 (${Math.min(reviewItems.length, 20)}个)</button>
           </div>
         ` : ''}
 
-        <div class="bottom-nav">
-          <div class="nav-item" onclick="App.showPage('map')">
-            <div class="nav-icon">🗺️</div><span class="nav-label">地图</span>
-          </div>
-          <div class="nav-item active" onclick="App.showPage('review')">
-            <div class="nav-icon">📖</div><span class="nav-label">复习</span>
-          </div>
-          <div class="nav-item" onclick="App.showPage('error')">
-            <div class="nav-icon">💝</div><span class="nav-label">错题本</span>
-          </div>
-          <div class="nav-item" onclick="App.showPage('achievement')">
-            <div class="nav-icon">🏆</div><span class="nav-label">成就</span>
-          </div>
-        </div>
+        ${this.renderBottomNav('review')}
       </div>
     `;
   },
 
   startReviewPractice() {
-    const reviewItems = MasterySystem.getReviewItems();
+    const plan = MasterySystem.getDailyPlan();
+    const reviewItems = plan.must.concat(plan.optional);
     if (reviewItems.length === 0) return;
 
     Game.resetState();
@@ -1685,24 +1712,314 @@ const App = {
         <div class="section-title">勋章墙</div>
         <div class="badge-grid">${badgesHTML}</div>
 
-        <div class="bottom-nav">
-          <div class="nav-item" onclick="App.showPage('map')">
-            <div class="nav-icon">🗺️</div><span class="nav-label">地图</span>
-          </div>
-          <div class="nav-item" onclick="App.showPage('review')">
-            <div class="nav-icon">📖</div><span class="nav-label">复习</span>
-          </div>
-          <div class="nav-item" onclick="App.showPage('error')">
-            <div class="nav-icon">💝</div><span class="nav-label">错题本</span>
-          </div>
-          <div class="nav-item active" onclick="App.showPage('achievement')">
-            <div class="nav-icon">🏆</div><span class="nav-label">成就</span>
-          </div>
-        </div>
+        ${this.renderBottomNav('achievement')}
       </div>
     `;
+  },
+
+  // ==================== 个人中心 + 记忆曲线 ====================
+  renderProfilePage(container) {
+    const stats = MasterySystem.getStats();
+    const playerName = typeof AuthUI !== 'undefined' ? AuthUI.getPlayerName() : '';
+    const isLoggedIn = typeof AuthUI !== 'undefined' && AuthUI.isLoggedIn();
+
+    // 计算学习天数
+    const all = MasterySystem.getAll();
+    const dates = new Set();
+    for (const key in all) {
+      if (all[key].lastPracticeDate) dates.add(all[key].lastPracticeDate);
+    }
+    const studyDays = dates.size;
+
+    // 计算平均难度
+    const avgEase = stats.avgEase ? stats.avgEase.toFixed(2) : '2.50';
+
+    // 收集记忆曲线数据
+    const curveData = this.getMemoryCurveData();
+
+    container.innerHTML = `
+      <div class="page active profile-page">
+        <div class="top-bar">
+          <button class="back-btn" onclick="App.showPage('map')">←</button>
+          <div style="font-size:20px;font-weight:bold">我的</div>
+          <div></div>
+        </div>
+
+        <div class="profile-header">
+          <div class="profile-avatar">🐱</div>
+          <div class="profile-name">${playerName || '小冒险家'}</div>
+          <div class="profile-sync-status">
+            ${isLoggedIn
+              ? '<span class="sync-on">云端已同步</span>'
+              : '<span class="sync-off">未登录 (本地模式)</span>'}
+          </div>
+        </div>
+
+        <div class="profile-stats">
+          <div class="profile-stat">
+            <div class="profile-stat-num">${studyDays}</div>
+            <div class="profile-stat-label">学习天数</div>
+          </div>
+          <div class="profile-stat">
+            <div class="profile-stat-num">${stats.total}</div>
+            <div class="profile-stat-label">已学字数</div>
+          </div>
+          <div class="profile-stat">
+            <div class="profile-stat-num">${stats.mastered}</div>
+            <div class="profile-stat-label">已掌握</div>
+          </div>
+          <div class="profile-stat">
+            <div class="profile-stat-num">${avgEase}</div>
+            <div class="profile-stat-label">平均难度</div>
+          </div>
+        </div>
+
+        <div class="section-title">记忆曲线</div>
+        <div class="curve-card">
+          <canvas id="memory-curve-canvas" width="340" height="200"></canvas>
+          <div class="curve-legend">
+            <span class="legend-item"><span class="legend-dot" style="background:#ff69b4"></span> 记忆保持率</span>
+            <span class="legend-item"><span class="legend-dot" style="background:#87ceeb"></span> 理想曲线</span>
+          </div>
+        </div>
+
+        <div class="section-title">掌握度分布</div>
+        <div class="curve-card">
+          <canvas id="mastery-dist-canvas" width="340" height="160"></canvas>
+        </div>
+
+        <div class="profile-actions">
+          ${isLoggedIn ? `
+            <button class="btn profile-action-btn" onclick="App.manualSync()">同步数据</button>
+            <button class="btn profile-action-btn danger" onclick="AuthUI.logout()">退出登录</button>
+          ` : `
+            <button class="btn btn-primary profile-action-btn" onclick="AuthUI.renderWelcome()">登录/注册</button>
+          `}
+        </div>
+
+        ${this.renderBottomNav('profile')}
+      </div>
+    `;
+
+    // 渲染完 DOM 后绘制 Canvas
+    setTimeout(() => {
+      this.drawMemoryCurve(curveData);
+      this.drawMasteryDistribution(stats);
+    }, 50);
+  },
+
+  // 获取记忆曲线数据：按天聚合记忆保持率
+  getMemoryCurveData() {
+    const all = MasterySystem.getAll();
+    const today = new Date(MasterySystem.todayStr());
+    const dayBuckets = {}; // daysAgo -> { total, retained }
+
+    for (const key in all) {
+      const entry = all[key];
+      if (!entry.lastPracticeDate) continue;
+
+      const lastDate = new Date(entry.lastPracticeDate);
+      const daysAgo = Math.floor((today - lastDate) / (1000 * 60 * 60 * 24));
+      if (daysAgo < 0 || daysAgo > 30) continue;
+
+      if (!dayBuckets[daysAgo]) dayBuckets[daysAgo] = { total: 0, retained: 0 };
+      dayBuckets[daysAgo].total++;
+
+      // 认为 masteryLevel >= 3 为"记住了"
+      if ((entry.masteryLevel || 0) >= 3) {
+        dayBuckets[daysAgo].retained++;
+      }
+    }
+
+    // 转成数组，按天排序
+    const data = [];
+    for (let d = 0; d <= 30; d++) {
+      const bucket = dayBuckets[d];
+      if (bucket && bucket.total > 0) {
+        data.push({ day: d, rate: bucket.retained / bucket.total });
+      }
+    }
+    return data;
+  },
+
+  // Canvas 绘制记忆曲线
+  drawMemoryCurve(data) {
+    const canvas = document.getElementById('memory-curve-canvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+    const pad = { top: 20, right: 20, bottom: 30, left: 40 };
+    const chartW = W - pad.left - pad.right;
+    const chartH = H - pad.top - pad.bottom;
+
+    ctx.clearRect(0, 0, W, H);
+
+    // 背景网格
+    ctx.strokeStyle = '#f0f0f0';
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 4; i++) {
+      const y = pad.top + (chartH / 4) * i;
+      ctx.beginPath();
+      ctx.moveTo(pad.left, y);
+      ctx.lineTo(W - pad.right, y);
+      ctx.stroke();
+    }
+
+    // Y 轴标签
+    ctx.fillStyle = '#999';
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'right';
+    for (let i = 0; i <= 4; i++) {
+      const y = pad.top + (chartH / 4) * i;
+      ctx.fillText((100 - i * 25) + '%', pad.left - 5, y + 4);
+    }
+
+    // X 轴标签
+    ctx.textAlign = 'center';
+    const xLabels = [0, 5, 10, 15, 20, 25, 30];
+    for (const d of xLabels) {
+      const x = pad.left + (d / 30) * chartW;
+      ctx.fillText(d + '天', x, H - 5);
+    }
+
+    // 理想艾宾浩斯曲线 (R = e^(-t/S), S=10)
+    ctx.beginPath();
+    ctx.strokeStyle = '#87ceeb';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 5]);
+    for (let d = 0; d <= 30; d++) {
+      const x = pad.left + (d / 30) * chartW;
+      const retention = Math.exp(-d / 10);
+      const y = pad.top + (1 - retention) * chartH;
+      if (d === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // 实际数据点 + 折线
+    if (data.length > 0) {
+      // 折线
+      ctx.beginPath();
+      ctx.strokeStyle = '#ff69b4';
+      ctx.lineWidth = 2.5;
+      data.forEach((pt, i) => {
+        const x = pad.left + (pt.day / 30) * chartW;
+        const y = pad.top + (1 - pt.rate) * chartH;
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+
+      // 数据点
+      data.forEach(pt => {
+        const x = pad.left + (pt.day / 30) * chartW;
+        const y = pad.top + (1 - pt.rate) * chartH;
+        ctx.beginPath();
+        ctx.arc(x, y, 4, 0, Math.PI * 2);
+        ctx.fillStyle = '#ff69b4';
+        ctx.fill();
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      });
+    }
+
+    // 无数据提示
+    if (data.length === 0) {
+      ctx.fillStyle = '#ccc';
+      ctx.font = '14px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('还没有学习数据，快去闯关吧!', W / 2, H / 2);
+    }
+  },
+
+  // Canvas 绘制掌握度分布柱状图
+  drawMasteryDistribution(stats) {
+    const canvas = document.getElementById('mastery-dist-canvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+    const pad = { top: 15, right: 20, bottom: 30, left: 40 };
+
+    ctx.clearRect(0, 0, W, H);
+
+    // 统计各等级数量
+    const all = MasterySystem.getAll();
+    const levelCounts = [0, 0, 0, 0, 0, 0]; // level 0-5
+    for (const key in all) {
+      const lv = all[key].masteryLevel || 0;
+      levelCounts[Math.min(5, lv)]++;
+    }
+
+    const maxCount = Math.max(...levelCounts, 1);
+    const labels = ['Lv0', 'Lv1', 'Lv2', 'Lv3', 'Lv4', 'Lv5'];
+    const colors = ['#ffcdd2', '#ffab91', '#ffe082', '#a5d6a7', '#81c784', '#4caf50'];
+
+    const chartW = W - pad.left - pad.right;
+    const chartH = H - pad.top - pad.bottom;
+    const barW = chartW / 6 * 0.6;
+    const gap = chartW / 6;
+
+    // 柱状图
+    for (let i = 0; i < 6; i++) {
+      const x = pad.left + gap * i + (gap - barW) / 2;
+      const barH = (levelCounts[i] / maxCount) * chartH;
+      const y = pad.top + chartH - barH;
+
+      // 圆角矩形
+      const r = 4;
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.lineTo(x + barW - r, y);
+      ctx.quadraticCurveTo(x + barW, y, x + barW, y + r);
+      ctx.lineTo(x + barW, pad.top + chartH);
+      ctx.lineTo(x, pad.top + chartH);
+      ctx.lineTo(x, y + r);
+      ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.fillStyle = colors[i];
+      ctx.fill();
+
+      // 数量标签
+      if (levelCounts[i] > 0) {
+        ctx.fillStyle = '#666';
+        ctx.font = '12px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(levelCounts[i], x + barW / 2, y - 4);
+      }
+
+      // X 轴标签
+      ctx.fillStyle = '#999';
+      ctx.font = '11px sans-serif';
+      ctx.fillText(labels[i], x + barW / 2, H - 5);
+    }
+
+    if (stats.total === 0) {
+      ctx.fillStyle = '#ccc';
+      ctx.font = '14px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('还没有学习数据', W / 2, H / 2);
+    }
+  },
+
+  // 手动同步
+  async manualSync() {
+    if (typeof CloudSync === 'undefined' || !CloudSync.enabled) return;
+    try {
+      await CloudSync.pushAllToCloud();
+      this.showFeedback('同步成功!', 'correct');
+    } catch (err) {
+      this.showFeedback('同步失败，请检查网络', 'wrong');
+    }
   }
 };
 
-// 启动应用
-document.addEventListener('DOMContentLoaded', () => App.init());
+// 启动应用：由 index.html 的 window.load 回调调用 AppBoot.start()
+// 确保在 loading 画面隐藏后再显示 auth/游戏界面
+const AppBoot = {
+  start() {
+    if (typeof AuthUI !== 'undefined') {
+      AuthUI.init();
+    } else {
+      App.init();
+    }
+  }
+};
