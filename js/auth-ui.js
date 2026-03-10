@@ -191,15 +191,20 @@ const AuthUI = {
         createdAt: firebase.firestore.FieldValue.serverTimestamp()
       });
 
+      // 先保存本地，确保不会丢失注册状态
       localStorage.setItem(this.PIN_STORAGE_KEY, pin);
       localStorage.setItem(this.NAME_STORAGE_KEY, name);
 
-      // 激活云同步（会把现有 localStorage 数据上传）
-      await CloudSync.activate(pin);
+      // 云同步（失败不影响注册）
+      try {
+        await CloudSync.activate(pin);
+      } catch (syncErr) {
+        console.warn('[Auth] 云同步失败，但注册已完成:', syncErr);
+      }
       App.init();
     } catch (err) {
       console.error('[Auth] 注册失败:', err);
-      errEl.textContent = '注册失败，请检查网络后重试';
+      errEl.textContent = '注册失败: ' + (err.code || '') + ' ' + (err.message || '未知错误');
       btn.textContent = '开始冒险!';
       btn.disabled = false;
     }
@@ -237,7 +242,7 @@ const AuthUI = {
       App.init();
     } catch (err) {
       console.error('[Auth] 登录失败:', err);
-      errEl.textContent = '登录失败，请检查网络后重试';
+      errEl.textContent = '登录失败: ' + (err.code || '') + ' ' + (err.message || '未知错误');
       btn.textContent = '进入!';
       btn.disabled = false;
     }
